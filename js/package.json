@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "workspaces": ["fabric-core", "fabric-web", "fabric-react-native"],
+  "scripts": {
+    "build": "npm run build -w fabric-core && npm run build -w fabric-web && npm run build -w fabric-react-native",
+    "clean": "rm -rf fabric-core/dist fabric-web/dist fabric-react-native/dist"
+  }
+}

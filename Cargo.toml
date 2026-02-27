@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["fabric", "relay"]
+
+[workspace.dependencies]
+libveritas = { git = "https://github.com/spacesprotocol/libveritas.git" }
+libveritas_testutil = { git = "https://github.com/spacesprotocol/libveritas.git" }
+spaces_client = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
+spaces_protocol = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
+spaces_ptr = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}

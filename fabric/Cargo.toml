@@ -1,0 +1,20 @@
+[package]
+name = "fabric"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["client"]
+client = ["reqwest", "rand", "tokio"]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+libveritas = { workspace = true }
+spaces_ptr = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
+rand = { version = "0.9", optional = true }
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt"], optional = true }
+dashmap = "6.1.0"
+hex = "0.4.3"
