@@ -1,5 +1,6 @@
 //! Certificate relay for verifying and storing zones and certificates.
 
+pub mod app;
 pub mod handler;
 pub mod http;
 pub mod peer;
