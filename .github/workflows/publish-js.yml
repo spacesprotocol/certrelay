@@ -1,0 +1,59 @@
+name: Publish JS packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set package versions
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          npm version "$VERSION" --no-git-tag-version -w fabric-core
+          npm version "$VERSION" --no-git-tag-version -w fabric-web
+          npm version "$VERSION" --no-git-tag-version -w fabric-react-native
+
+      - run: npm install
+
+      - run: npm run build
+
+      - name: Publish fabric-core
+        run: npm publish -w fabric-core --provenance --access public --tag ${{ startsWith(github.ref, 'refs/tags/') && 'latest' || 'dev' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish fabric-web
+        run: npm publish -w fabric-web --provenance --access public --tag ${{ startsWith(github.ref, 'refs/tags/') && 'latest' || 'dev' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish fabric-react-native
+        run: npm publish -w fabric-react-native --provenance --access public --tag ${{ startsWith(github.ref, 'refs/tags/') && 'latest' || 'dev' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
