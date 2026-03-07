@@ -51,8 +51,9 @@ function getRaw(handle: QueryContextHandle): any {
 // ── WASM adapter (@spacesprotocol/libveritas) ──
 
 export interface WasmLibveritas {
-  Veritas: new (anchors: any, devMode: boolean) => any;
+  Veritas: { new (anchors: any): any; withDevMode(anchors: any): any };
   QueryContext: new () => any;
+  Message: new (bytes: Uint8Array) => any;
 }
 
 /**
@@ -67,11 +68,13 @@ export interface WasmLibveritas {
 export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
   return {
     createVeritas(anchorsJson, devMode) {
-      const v = new lib.Veritas(anchorsJson, devMode);
+      const v = devMode
+        ? lib.Veritas.withDevMode(anchorsJson)
+        : new lib.Veritas(anchorsJson);
       return {
         newestAnchor: () => v.newest_anchor(),
         verifyMessage(ctx, msg) {
-          const vm = v.verify_message(getRaw(ctx), msg);
+          const vm = v.verify_message(getRaw(ctx), new lib.Message(msg));
           return {
             zones: () =>
               vm.zones().map(
@@ -99,9 +102,10 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
 // ── React Native adapter (@spacesprotocol/react-native-libveritas) ──
 
 export interface ReactNativeLibveritas {
-  Veritas: new (anchors: any, devMode: boolean) => any;
-  VeritasAnchors: { fromJson(json: string): any };
-  VeritasQueryContext: new () => any;
+  Veritas: { new (anchors: any): any; withDevMode(anchors: any): any };
+  Anchors: { fromJson(json: string): any };
+  QueryContext: new () => any;
+  Message: new (bytes: ArrayBuffer) => any;
 }
 
 /**
@@ -118,8 +122,10 @@ export function reactNativeProvider(
 ): VeritasProvider {
   return {
     createVeritas(anchorsJson, devMode) {
-      const anchors = lib.VeritasAnchors.fromJson(JSON.stringify(anchorsJson));
-      const v = new lib.Veritas(anchors, devMode);
+      const anchors = lib.Anchors.fromJson(JSON.stringify(anchorsJson));
+      const v = devMode
+        ? lib.Veritas.withDevMode(anchors)
+        : new lib.Veritas(anchors);
       return {
         newestAnchor: () => v.newestAnchor(),
         verifyMessage(ctx, msg) {
@@ -127,7 +133,7 @@ export function reactNativeProvider(
             msg.byteOffset,
             msg.byteOffset + msg.byteLength,
           );
-          const vm = v.verifyMessage(getRaw(ctx), msgBuf);
+          const vm = v.verifyMessage(getRaw(ctx), new lib.Message(msgBuf as ArrayBuffer));
           return {
             zones: () =>
               vm.zones().map(
@@ -145,7 +151,7 @@ export function reactNativeProvider(
       };
     },
     createQueryContext() {
-      const ctx = new lib.VeritasQueryContext();
+      const ctx = new lib.QueryContext();
       return {
         [RAW]: ctx,
         addRequest: (h: string) => ctx.addRequest(h),

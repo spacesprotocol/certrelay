@@ -22,12 +22,6 @@ pub struct Handler {
     pub store: SqliteStore,
 }
 
-#[derive(Clone)]
-pub struct ChainProofAnswer {
-    pub proof: ChainProof,
-    pub anchor: ChainAnchor,
-}
-
 impl Handler {
     pub fn new(veritas: Veritas, store: SqliteStore, anchor_store: AnchorStore) -> Self {
         Self {
@@ -159,11 +153,10 @@ impl Handler {
             }
         }
 
-        let answer = chain.prove(&chain_req).await?;
+        let chain = chain.prove(&chain_req).await?;
 
         Ok(msg::Message {
-            anchor: answer.anchor,
-            chain: answer.proof,
+            chain,
             spaces: bundles,
         })
     }
@@ -180,7 +173,7 @@ impl Handler {
         };
 
         let all_rows = self.store.get_handle_hints(handles)?;
-        for space in handles.iter().filter(|h| h.starts_with("@")) {
+        for space in handles.iter().filter(|h| h.starts_with("@") || h.starts_with("#")) {
             let Some(space_row) = all_rows
                 .iter()
                 .find(|r| &r.handle == space) else {

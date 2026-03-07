@@ -31,3 +31,12 @@ export type {
   EpochResult,
   HandleHint,
 } from "@spacesprotocol/fabric-core";
+
+// Re-export libveritas types for message building
+export {
+  Message,
+  MessageBuilder,
+  OffchainData,
+  RecordSet,
+  Zone,
+} from "@spacesprotocol/libveritas";

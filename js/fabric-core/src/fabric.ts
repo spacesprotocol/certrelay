@@ -230,10 +230,10 @@ export class Fabric {
 
     const zones = await this.sendQuery(ctx, request, relays);
 
-    // Cache root zones (single-label handles like "@bitcoin")
+    // Cache root zones (spaces like "@bitcoin" or "#12-12")
     for (const zone of zones) {
       const handle = zone.handle();
-      if (handle.startsWith("@")) {
+      if (handle.startsWith("@") || handle.startsWith("#")) {
         this.zoneCache.set(handle, { bytes: zone.toBytes(), zone });
       }
     }
@@ -337,6 +337,46 @@ export class Fabric {
     // Sort freshest first (b vs a for descending)
     ranked.sort((a, b) => compareHints(b.hints, a.hints));
     return ranked.map((r) => r.url);
+  }
+
+  // ── Chain proofs ──
+
+  async prove(request: any): Promise<Uint8Array> {
+    await this.bootstrap();
+    const urls = this.pool.shuffledUrls(4);
+    let lastErr: Error = new FabricError("no peers available", "no_peers");
+
+    for (const url of urls) {
+      try {
+        const resp = await fetch(`${url}/chain-proof`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(request),
+        });
+
+        if (!resp.ok) {
+          const body = await resp.text();
+          this.pool.markFailed(url);
+          lastErr = new FabricError(
+            `relay error (${resp.status}): ${body}`,
+            "relay",
+            resp.status,
+          );
+          continue;
+        }
+
+        this.pool.markAlive(url);
+        return new Uint8Array(await resp.arrayBuffer());
+      } catch (e) {
+        this.pool.markFailed(url);
+        lastErr =
+          e instanceof FabricError
+            ? e
+            : new FabricError(`http error: ${e}`, "http");
+      }
+    }
+
+    throw lastErr;
   }
 
   // ── Broadcast ──
@@ -535,16 +575,19 @@ function hintsQueryString(request: QueryRequest): string {
 }
 
 function parseHandle(handle: string): { space: string; label: string } {
-  const atIdx = handle.indexOf("@");
-  if (atIdx < 0) {
+  let sepIdx = handle.indexOf("@");
+  if (sepIdx < 0) {
+    sepIdx = handle.indexOf("#");
+  }
+  if (sepIdx < 0) {
     throw new FabricError(`invalid handle: ${handle}`, "decode");
   }
-  if (atIdx === 0) {
+  if (sepIdx === 0) {
     return { space: handle, label: "" };
   }
   return {
-    space: handle.substring(atIdx),
-    label: handle.substring(0, atIdx),
+    space: handle.substring(sepIdx),
+    label: handle.substring(0, sepIdx),
   };
 }
 

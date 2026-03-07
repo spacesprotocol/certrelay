@@ -286,6 +286,46 @@ impl Fabric {
         ranked.into_iter().map(|(url, _)| url).collect()
     }
 
+    /// Request a chain proof from a relay.
+    /// Sends a `ChainProofRequest` and returns the borsh-encoded `ChainProof` bytes.
+    pub async fn prove(&self, request: &spaces_ptr::ChainProofRequest) -> Result<Vec<u8>> {
+        self.bootstrap().await?;
+        let body = serde_json::to_vec(request)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let urls = self.pool.shuffled_urls_n(4);
+        let mut last_err = Error::NoPeers;
+
+        for url in &urls {
+            let result = self
+                .http
+                .post(format!("{url}/chain-proof"))
+                .body(body.clone())
+                .header("content-type", "application/json")
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) if resp.status().is_success() => {
+                    self.pool.mark_alive(url);
+                    return Ok(resp.bytes().await?.to_vec());
+                }
+                Ok(resp) => {
+                    self.pool.mark_failed(url);
+                    let status = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    last_err = Error::Relay { status, body };
+                }
+                Err(e) => {
+                    self.pool.mark_failed(url);
+                    last_err = Error::Http(e);
+                }
+            }
+        }
+
+        Err(last_err)
+    }
+
     /// Broadcast a message to up to 4 random relays for gossip propagation.
     /// Mines proof-of-work automatically. Returns Ok if at least one relay accepted.
     pub async fn broadcast(&self, msg_bytes: &[u8]) -> Result<()> {

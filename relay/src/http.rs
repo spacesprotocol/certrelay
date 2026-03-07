@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 
 pub use governor::Quota;
 pub use resolver::{Announcement, EpochHint, PeerInfo, Query, QueryRequest};
+use spaces_ptr::ChainProofRequest;
 
 use libveritas::Veritas;
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
@@ -147,6 +148,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/query", post(handle_query))
         .route("/anchors", get(handle_anchors))
         .route("/hints", get(handle_hints))
+        .route("/chain-proof", post(handle_chain_proof))
         .with_state(state)
 }
 
@@ -193,7 +195,7 @@ async fn handle_message(
     }
 
     // Deserialize the message
-    let msg: Message = match borsh::from_slice(&body) {
+    let msg: Message = match Message::from_slice(&body) {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!("failed to deserialize message: {}", e);
@@ -303,10 +305,7 @@ async fn handle_query(
 
     // Resolve the queries - response is binary (borsh-encoded Message)
     match state.handler.resolve(&state.chain, request.queries).await {
-        Ok(msg) => match borsh::to_vec(&msg) {
-            Ok(data) => (StatusCode::OK, data).into_response(),
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response(),
-        },
+        Ok(msg) => (StatusCode::OK, msg.to_bytes()).into_response(),
         Err(e) => {
             tracing::warn!("failed to resolve query: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response()
@@ -389,6 +388,38 @@ async fn handle_hints(
     }
 }
 
+
+/// POST /chain-proof - Build a chain proof from a ChainProofRequest.
+///
+/// Body: JSON ChainProofRequest
+/// Returns: binary borsh-encoded ChainProof
+async fn handle_chain_proof(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let ip = client_ip(&addr, &headers, &state.remote_ip_header);
+    if state.limiters.query.check_key(&ip).is_err() {
+        return (StatusCode::TOO_MANY_REQUESTS, vec![]).into_response();
+    }
+
+    let request: ChainProofRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("failed to deserialize chain proof request: {}", e);
+            return (StatusCode::BAD_REQUEST, vec![]).into_response();
+        }
+    };
+
+    match state.chain.prove(&request).await {
+        Ok(proof) => (StatusCode::OK, proof.to_bytes()).into_response(),
+        Err(e) => {
+            tracing::warn!("failed to build chain proof: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response()
+        }
+    }
+}
 
 /// Gossip a message to up to 4 random verified peers, forwarding the PoW header.
 async fn gossip_message(

@@ -20,7 +20,7 @@ pub use pow::PowGuard;
 
 // Re-export wire format types from relay-client
 pub use resolver::{capabilities, Announcement, EpochHint, PeerInfo, Query, QueryRequest};
-pub use handler::{ChainProofAnswer, Handler};
+pub use handler::{Handler};
 pub use relay::{Config, Relay, ServiceRunner};
 pub use spaces_client::config::ExtendedNetwork;
 pub use spaced::SpacedClient;
