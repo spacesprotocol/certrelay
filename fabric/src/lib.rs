@@ -7,15 +7,7 @@
 
 #[cfg(feature = "client")]
 pub mod client;
-#[cfg(feature = "client")]
-pub mod pow;
 mod seeds;
-
-/// Proof-of-work header name.
-pub const POW_HEADER: &str = "x-pow";
-
-/// Default proof-of-work difficulty (leading zero bits).
-pub const DEFAULT_DIFFICULTY: u32 = 36;
 
 use std::collections::HashMap;
 use std::net::IpAddr;

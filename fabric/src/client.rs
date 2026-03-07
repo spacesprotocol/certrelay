@@ -7,7 +7,7 @@ use std::fmt;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::{AnchorResponse, EpochHint, HintsResponse, Message, POW_HEADER, PeerInfo, Query, QueryRequest, pow};
+use crate::{AnchorResponse, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest};
 use crate::seeds::SEEDS;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -16,7 +16,6 @@ pub struct Fabric {
     http: reqwest::Client,
     pool: RelayPool,
     veritas: Mutex<Veritas>,
-    pow_difficulty: u32,
     root_cache: dashmap::DashMap<String, Zone>,
     seeds: Vec<String>,
     anchor_set_hash: Mutex<Option<String>>,
@@ -44,7 +43,6 @@ impl Fabric {
             http: reqwest::Client::new(),
             pool: RelayPool::new(std::iter::empty::<String>()),
             veritas: Mutex::new(Veritas::new()),
-            pow_difficulty: crate::DEFAULT_DIFFICULTY,
             root_cache: Default::default(),
             seeds: seeds.iter().map(|s| s.to_string()).collect(),
             anchor_set_hash: Mutex::new(None),
@@ -327,21 +325,8 @@ impl Fabric {
     }
 
     /// Broadcast a message to up to 4 random relays for gossip propagation.
-    /// Mines proof-of-work automatically. Returns Ok if at least one relay accepted.
+    /// Returns Ok if at least one relay accepted.
     pub async fn broadcast(&self, msg_bytes: &[u8]) -> Result<()> {
-        self.bootstrap().await?;
-        let body_owned = msg_bytes.to_vec();
-        let difficulty = self.pow_difficulty;
-        let nonce = tokio::task::spawn_blocking(move || pow::mine(&body_owned, difficulty))
-            .await
-            .expect("pow mining task panicked");
-
-        self.broadcast_with_pow(msg_bytes, &nonce).await
-    }
-
-    /// Broadcast a message with a pre-computed proof-of-work nonce.
-    /// Use this when the PoW is computed externally.
-    pub async fn broadcast_with_pow(&self, msg_bytes: &[u8], pow_nonce: &str) -> Result<()> {
         self.bootstrap().await?;
         let urls = self.pool.shuffled_urls_n(4);
         if urls.is_empty() {
@@ -356,7 +341,6 @@ impl Fabric {
                 .post(format!("{url}/message"))
                 .body(msg_bytes.to_vec())
                 .header("content-type", "application/octet-stream")
-                .header(POW_HEADER, pow_nonce)
                 .send()
                 .await;
 

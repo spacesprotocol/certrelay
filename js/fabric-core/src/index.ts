@@ -1,7 +1,6 @@
 export { Fabric, FabricError } from "./fabric.js";
 export type { FabricOptions, PeerInfo } from "./fabric.js";
 export { RelayPool } from "./pool.js";
-export { mine, DEFAULT_DIFFICULTY } from "./pow.js";
 export { compareHints } from "./hints.js";
 export type {
   HintsResponse,

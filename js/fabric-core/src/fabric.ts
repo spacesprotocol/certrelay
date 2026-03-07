@@ -1,5 +1,4 @@
 import { RelayPool } from "./pool.js";
-import { mine, hexDecode, DEFAULT_DIFFICULTY } from "./pow.js";
 import { compareHints, HintsResponse } from "./hints.js";
 import { DEFAULT_SEEDS } from "./seeds.js";
 import type {
@@ -8,8 +7,6 @@ import type {
   FabricZone,
   QueryContextHandle,
 } from "./provider.js";
-
-const POW_HEADER = "x-pow";
 
 export interface FabricOptions {
   provider: VeritasProvider;
@@ -91,7 +88,6 @@ export class Fabric {
   private zoneCache = new Map<string, { bytes: Uint8Array; zone: FabricZone }>();
   private seeds: string[];
   private _anchorSetHash: string | null;
-  private powDifficulty = DEFAULT_DIFFICULTY;
   preferLatest: boolean;
 
   constructor(options: FabricOptions) {
@@ -383,15 +379,6 @@ export class Fabric {
 
   async broadcast(msgBytes: Uint8Array): Promise<void> {
     await this.bootstrap();
-    const nonce = await mine(msgBytes, this.powDifficulty);
-    await this.broadcastWithPow(msgBytes, nonce);
-  }
-
-  async broadcastWithPow(
-    msgBytes: Uint8Array,
-    powNonce: string,
-  ): Promise<void> {
-    await this.bootstrap();
     const urls = this.pool.shuffledUrls(4);
     if (urls.length === 0) {
       throw new FabricError("no peers available", "no_peers");
@@ -406,7 +393,6 @@ export class Fabric {
           method: "POST",
           headers: {
             "content-type": "application/octet-stream",
-            [POW_HEADER]: powNonce,
           },
           body: msgBytes as unknown as BodyInit,
         });
@@ -589,6 +575,14 @@ function parseHandle(handle: string): { space: string; label: string } {
     space: handle.substring(sepIdx),
     label: handle.substring(0, sepIdx),
   };
+}
+
+function hexDecode(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
 }
 
 async function rootMatches(resp: AnchorResponse): Promise<boolean> {

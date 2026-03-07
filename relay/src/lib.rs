@@ -4,7 +4,6 @@ pub mod app;
 pub mod handler;
 pub mod http;
 pub mod peer;
-pub mod pow;
 pub mod relay;
 pub mod store;
 pub mod spaced;
@@ -16,7 +15,6 @@ pub use http::{
     BOOTSTRAP_RELAYS, DEFAULT_MAX_MESSAGE_SIZE,
 };
 pub use peer::{AnnounceResult, PeerConfig, PeerTable};
-pub use pow::PowGuard;
 
 // Re-export wire format types from relay-client
 pub use resolver::{capabilities, Announcement, EpochHint, PeerInfo, Query, QueryRequest};

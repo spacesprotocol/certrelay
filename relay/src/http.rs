@@ -29,7 +29,6 @@ use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
 use crate::anchor::AnchorStore;
 use crate::handler::Handler;
 use crate::peer::{PeerConfig, PeerTable};
-use crate::pow::{PowGuard, POW_HEADER};
 use crate::spaced::SpacedClient;
 
 /// Per-IP rate limiter type alias.
@@ -92,7 +91,6 @@ pub struct AppState {
     pub chain: SpacedClient,
     pub peers: Mutex<PeerTable>,
     pub limiters: RateLimiters,
-    pub pow: PowGuard,
     pub max_message_size: usize,
     pub http_client: reqwest::Client,
     /// Our own URL for announcements (if set)
@@ -122,7 +120,6 @@ impl AppState {
             chain,
             peers: Mutex::new(PeerTable::new(peer_config)),
             limiters: RateLimiters::new(&rate_config),
-            pow: PowGuard::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             http_client: reqwest::Client::new(),
             self_url: None,
@@ -189,11 +186,6 @@ async fn handle_message(
         return (StatusCode::PAYLOAD_TOO_LARGE, "message too large");
     }
 
-    // PoW and replay check
-    if let Err(e) = state.pow.check(&headers, &body) {
-        return e;
-    }
-
     // Deserialize the message
     let msg: Message = match Message::from_slice(&body) {
         Ok(m) => m,
@@ -209,8 +201,7 @@ async fn handle_message(
         return (StatusCode::BAD_REQUEST, "message verification failed");
     }
 
-    let pow_value = headers.get(POW_HEADER).cloned();
-    gossip_message(state, body, pow_value).await;
+    gossip_message(state, body).await;
 
     (StatusCode::OK, "ok")
 }
@@ -421,11 +412,10 @@ async fn handle_chain_proof(
     }
 }
 
-/// Gossip a message to up to 4 random verified peers, forwarding the PoW header.
+/// Gossip a message to up to 4 random verified peers.
 async fn gossip_message(
     state: Arc<AppState>,
     msg_bytes: Bytes,
-    pow_header: Option<axum::http::HeaderValue>,
 ) {
     use rand::seq::IndexedRandom;
 
@@ -442,19 +432,16 @@ async fn gossip_message(
     for peer in targets {
         let state = Arc::clone(&state);
         let msg_bytes = msg_bytes.clone();
-        let pow_header = pow_header.clone();
 
         tokio::spawn(async move {
             let url = format!("{}/message", peer.url);
-            let mut req = state
+            let result = state
                 .http_client
                 .post(&url)
                 .body(msg_bytes.to_vec())
-                .header("Content-Type", "application/octet-stream");
-            if let Some(pow) = &pow_header {
-                req = req.header(POW_HEADER, pow.to_str().unwrap_or_default());
-            }
-            let result = req.send().await;
+                .header("Content-Type", "application/octet-stream")
+                .send()
+                .await;
 
             let mut peers = state.peers.lock().await;
             match result {

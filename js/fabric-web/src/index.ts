@@ -17,9 +17,7 @@ export class Fabric extends FabricCore {
 export {
   FabricError,
   RelayPool,
-  mine,
   compareHints,
-  DEFAULT_DIFFICULTY,
   DEFAULT_SEEDS,
 } from "@spacesprotocol/fabric-core";
 

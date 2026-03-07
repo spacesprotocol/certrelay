@@ -1,10 +1,9 @@
 use libveritas::cert::{ChainProofRequestUtils, HandleSubtree, Witness};
-use libveritas::msg::{self, ChainProof, Handle, QueryContext};
+use libveritas::msg::{self, Handle, QueryContext};
 use libveritas::sname::{Label, NameLike, SName};
 use libveritas::{ProvableOption, Veritas, Zone};
 use spacedb::Hash;
 use spacedb::subtree::SubTree;
-use spaces_protocol::constants::ChainAnchor;
 use spaces_protocol::slabel::SLabel;
 use spaces_ptr::ChainProofRequest;
 use std::collections::{HashMap, HashSet};

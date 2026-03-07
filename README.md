@@ -90,10 +90,11 @@ The web and React Native packages re-export everything from core, so most consum
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/query` | Resolve handles (JSON request, binary response) |
-| POST | `/message` | Submit a certificate message (binary, requires PoW) |
+| POST | `/message` | Submit a certificate message (binary) |
 | POST | `/announce` | Announce a peer relay (JSON) |
 | GET | `/peers` | List known peers (JSON) |
 | GET | `/hints` | Lightweight freshness check (JSON) |
+| POST | `/chain-proof` | Build a chain proof (JSON request, binary response) |
 | GET | `/anchors` | Get trust anchor set (JSON) |
 
 ### Resolving handles
@@ -246,7 +247,7 @@ Fabric is the recommended way to interact with the relay network. Under the hood
 4. **Resolves handles** by posting to `POST /query` on the freshest relay, verifying the binary response with libveritas, and falling through to the next relay on failure
 5. **Caches root zones** so subsequent queries for handles in the same space can include epoch hints and skip redundant proofs
 
-For broadcasting, Fabric mines a proof-of-work nonce (SHA-256 with leading zero bits) and submits the message to multiple relays via `POST /message` for gossip propagation.
+For broadcasting, Fabric submits the message to multiple relays via `POST /message` for gossip propagation.
 
 
 ## Peer discovery
@@ -295,7 +296,6 @@ All options can be set via CLI flags or environment variables:
 | `--port` | `CERTRELAY_PORT` | `7779` | Listen port |
 | `--self-url` | `CERTRELAY_SELF_URL` | - | Public URL for peer announcements |
 | `--spaced-rpc-url` | `CERTRELAY_SPACED_RPC_URL` | - | External spaced RPC URL (skips embedded node) |
-| `--pow-difficulty` | `CERTRELAY_POW_DIFFICULTY` | `20` | PoW difficulty for message submissions (0 to disable) |
 | `--remote-ip-header` | `CERTRELAY_REMOTE_IP_HEADER` | - | Header for client IP behind a reverse proxy |
 | `--is-bootstrap` | `CERTRELAY_BOOTSTRAP` | `false` | Run as a bootstrap node |
 
