@@ -1,5 +1,4 @@
 import { RelayPool } from "./pool.js";
-import { mine, hexDecode, DEFAULT_DIFFICULTY } from "./pow.js";
 import { compareHints, HintsResponse } from "./hints.js";
 import { DEFAULT_SEEDS } from "./seeds.js";
 import type {
@@ -8,8 +7,6 @@ import type {
   FabricZone,
   QueryContextHandle,
 } from "./provider.js";
-
-const POW_HEADER = "x-pow";
 
 export interface FabricOptions {
   provider: VeritasProvider;
@@ -91,7 +88,6 @@ export class Fabric {
   private zoneCache = new Map<string, { bytes: Uint8Array; zone: FabricZone }>();
   private seeds: string[];
   private _anchorSetHash: string | null;
-  private powDifficulty = DEFAULT_DIFFICULTY;
   preferLatest: boolean;
 
   constructor(options: FabricOptions) {
@@ -230,10 +226,10 @@ export class Fabric {
 
     const zones = await this.sendQuery(ctx, request, relays);
 
-    // Cache root zones (single-label handles like "@bitcoin")
+    // Cache root zones (spaces like "@bitcoin" or "#12-12")
     for (const zone of zones) {
       const handle = zone.handle();
-      if (handle.startsWith("@")) {
+      if (handle.startsWith("@") || handle.startsWith("#")) {
         this.zoneCache.set(handle, { bytes: zone.toBytes(), zone });
       }
     }
@@ -339,18 +335,49 @@ export class Fabric {
     return ranked.map((r) => r.url);
   }
 
+  // ── Chain proofs ──
+
+  async prove(request: any): Promise<Uint8Array> {
+    await this.bootstrap();
+    const urls = this.pool.shuffledUrls(4);
+    let lastErr: Error = new FabricError("no peers available", "no_peers");
+
+    for (const url of urls) {
+      try {
+        const resp = await fetch(`${url}/chain-proof`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(request),
+        });
+
+        if (!resp.ok) {
+          const body = await resp.text();
+          this.pool.markFailed(url);
+          lastErr = new FabricError(
+            `relay error (${resp.status}): ${body}`,
+            "relay",
+            resp.status,
+          );
+          continue;
+        }
+
+        this.pool.markAlive(url);
+        return new Uint8Array(await resp.arrayBuffer());
+      } catch (e) {
+        this.pool.markFailed(url);
+        lastErr =
+          e instanceof FabricError
+            ? e
+            : new FabricError(`http error: ${e}`, "http");
+      }
+    }
+
+    throw lastErr;
+  }
+
   // ── Broadcast ──
 
   async broadcast(msgBytes: Uint8Array): Promise<void> {
-    await this.bootstrap();
-    const nonce = await mine(msgBytes, this.powDifficulty);
-    await this.broadcastWithPow(msgBytes, nonce);
-  }
-
-  async broadcastWithPow(
-    msgBytes: Uint8Array,
-    powNonce: string,
-  ): Promise<void> {
     await this.bootstrap();
     const urls = this.pool.shuffledUrls(4);
     if (urls.length === 0) {
@@ -366,7 +393,6 @@ export class Fabric {
           method: "POST",
           headers: {
             "content-type": "application/octet-stream",
-            [POW_HEADER]: powNonce,
           },
           body: msgBytes as unknown as BodyInit,
         });
@@ -535,17 +561,28 @@ function hintsQueryString(request: QueryRequest): string {
 }
 
 function parseHandle(handle: string): { space: string; label: string } {
-  const atIdx = handle.indexOf("@");
-  if (atIdx < 0) {
+  let sepIdx = handle.indexOf("@");
+  if (sepIdx < 0) {
+    sepIdx = handle.indexOf("#");
+  }
+  if (sepIdx < 0) {
     throw new FabricError(`invalid handle: ${handle}`, "decode");
   }
-  if (atIdx === 0) {
+  if (sepIdx === 0) {
     return { space: handle, label: "" };
   }
   return {
-    space: handle.substring(atIdx),
-    label: handle.substring(0, atIdx),
+    space: handle.substring(sepIdx),
+    label: handle.substring(0, sepIdx),
   };
+}
+
+function hexDecode(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
 }
 
 async function rootMatches(resp: AnchorResponse): Promise<boolean> {

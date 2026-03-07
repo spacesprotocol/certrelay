@@ -1,10 +1,9 @@
 use libveritas::cert::{ChainProofRequestUtils, HandleSubtree, Witness};
-use libveritas::msg::{self, ChainProof, Handle, QueryContext};
+use libveritas::msg::{self, Handle, QueryContext};
 use libveritas::sname::{Label, NameLike, SName};
 use libveritas::{ProvableOption, Veritas, Zone};
 use spacedb::Hash;
 use spacedb::subtree::SubTree;
-use spaces_protocol::constants::ChainAnchor;
 use spaces_protocol::slabel::SLabel;
 use spaces_ptr::ChainProofRequest;
 use std::collections::{HashMap, HashSet};
@@ -20,12 +19,6 @@ pub struct Handler {
     pub veritas: Mutex<Veritas>,
     pub anchor_store: Mutex<AnchorStore>,
     pub store: SqliteStore,
-}
-
-#[derive(Clone)]
-pub struct ChainProofAnswer {
-    pub proof: ChainProof,
-    pub anchor: ChainAnchor,
 }
 
 impl Handler {
@@ -159,11 +152,10 @@ impl Handler {
             }
         }
 
-        let answer = chain.prove(&chain_req).await?;
+        let chain = chain.prove(&chain_req).await?;
 
         Ok(msg::Message {
-            anchor: answer.anchor,
-            chain: answer.proof,
+            chain,
             spaces: bundles,
         })
     }
@@ -180,7 +172,7 @@ impl Handler {
         };
 
         let all_rows = self.store.get_handle_hints(handles)?;
-        for space in handles.iter().filter(|h| h.starts_with("@")) {
+        for space in handles.iter().filter(|h| h.starts_with("@") || h.starts_with("#")) {
             let Some(space_row) = all_rows
                 .iter()
                 .find(|r| &r.handle == space) else {

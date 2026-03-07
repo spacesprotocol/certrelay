@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 
 pub use governor::Quota;
 pub use resolver::{Announcement, EpochHint, PeerInfo, Query, QueryRequest};
+use spaces_ptr::ChainProofRequest;
 
 use libveritas::Veritas;
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
@@ -28,7 +29,6 @@ use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
 use crate::anchor::AnchorStore;
 use crate::handler::Handler;
 use crate::peer::{PeerConfig, PeerTable};
-use crate::pow::{PowGuard, POW_HEADER};
 use crate::spaced::SpacedClient;
 
 /// Per-IP rate limiter type alias.
@@ -91,7 +91,6 @@ pub struct AppState {
     pub chain: SpacedClient,
     pub peers: Mutex<PeerTable>,
     pub limiters: RateLimiters,
-    pub pow: PowGuard,
     pub max_message_size: usize,
     pub http_client: reqwest::Client,
     /// Our own URL for announcements (if set)
@@ -121,7 +120,6 @@ impl AppState {
             chain,
             peers: Mutex::new(PeerTable::new(peer_config)),
             limiters: RateLimiters::new(&rate_config),
-            pow: PowGuard::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             http_client: reqwest::Client::new(),
             self_url: None,
@@ -147,6 +145,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/query", post(handle_query))
         .route("/anchors", get(handle_anchors))
         .route("/hints", get(handle_hints))
+        .route("/chain-proof", post(handle_chain_proof))
         .with_state(state)
 }
 
@@ -187,13 +186,8 @@ async fn handle_message(
         return (StatusCode::PAYLOAD_TOO_LARGE, "message too large");
     }
 
-    // PoW and replay check
-    if let Err(e) = state.pow.check(&headers, &body) {
-        return e;
-    }
-
     // Deserialize the message
-    let msg: Message = match borsh::from_slice(&body) {
+    let msg: Message = match Message::from_slice(&body) {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!("failed to deserialize message: {}", e);
@@ -207,8 +201,7 @@ async fn handle_message(
         return (StatusCode::BAD_REQUEST, "message verification failed");
     }
 
-    let pow_value = headers.get(POW_HEADER).cloned();
-    gossip_message(state, body, pow_value).await;
+    gossip_message(state, body).await;
 
     (StatusCode::OK, "ok")
 }
@@ -303,10 +296,7 @@ async fn handle_query(
 
     // Resolve the queries - response is binary (borsh-encoded Message)
     match state.handler.resolve(&state.chain, request.queries).await {
-        Ok(msg) => match borsh::to_vec(&msg) {
-            Ok(data) => (StatusCode::OK, data).into_response(),
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response(),
-        },
+        Ok(msg) => (StatusCode::OK, msg.to_bytes()).into_response(),
         Err(e) => {
             tracing::warn!("failed to resolve query: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response()
@@ -390,11 +380,42 @@ async fn handle_hints(
 }
 
 
-/// Gossip a message to up to 4 random verified peers, forwarding the PoW header.
+/// POST /chain-proof - Build a chain proof from a ChainProofRequest.
+///
+/// Body: JSON ChainProofRequest
+/// Returns: binary borsh-encoded ChainProof
+async fn handle_chain_proof(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let ip = client_ip(&addr, &headers, &state.remote_ip_header);
+    if state.limiters.query.check_key(&ip).is_err() {
+        return (StatusCode::TOO_MANY_REQUESTS, vec![]).into_response();
+    }
+
+    let request: ChainProofRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("failed to deserialize chain proof request: {}", e);
+            return (StatusCode::BAD_REQUEST, vec![]).into_response();
+        }
+    };
+
+    match state.chain.prove(&request).await {
+        Ok(proof) => (StatusCode::OK, proof.to_bytes()).into_response(),
+        Err(e) => {
+            tracing::warn!("failed to build chain proof: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response()
+        }
+    }
+}
+
+/// Gossip a message to up to 4 random verified peers.
 async fn gossip_message(
     state: Arc<AppState>,
     msg_bytes: Bytes,
-    pow_header: Option<axum::http::HeaderValue>,
 ) {
     use rand::seq::IndexedRandom;
 
@@ -411,19 +432,16 @@ async fn gossip_message(
     for peer in targets {
         let state = Arc::clone(&state);
         let msg_bytes = msg_bytes.clone();
-        let pow_header = pow_header.clone();
 
         tokio::spawn(async move {
             let url = format!("{}/message", peer.url);
-            let mut req = state
+            let result = state
                 .http_client
                 .post(&url)
                 .body(msg_bytes.to_vec())
-                .header("Content-Type", "application/octet-stream");
-            if let Some(pow) = &pow_header {
-                req = req.header(POW_HEADER, pow.to_str().unwrap_or_default());
-            }
-            let result = req.send().await;
+                .header("Content-Type", "application/octet-stream")
+                .send()
+                .await;
 
             let mut peers = state.peers.lock().await;
             match result {

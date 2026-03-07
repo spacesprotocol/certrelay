@@ -5,8 +5,9 @@ import {
 import type { FabricOptions as CoreOptions } from "@spacesprotocol/fabric-core";
 import {
   Veritas,
-  VeritasAnchors,
-  VeritasQueryContext,
+  Anchors,
+  QueryContext,
+  Message,
 } from "@spacesprotocol/react-native-libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
@@ -17,8 +18,9 @@ export class Fabric extends FabricCore {
       ...options,
       provider: reactNativeProvider({
         Veritas,
-        VeritasAnchors,
-        VeritasQueryContext,
+        Anchors,
+        QueryContext,
+        Message,
       }),
     });
   }
@@ -28,9 +30,7 @@ export class Fabric extends FabricCore {
 export {
   FabricError,
   RelayPool,
-  mine,
   compareHints,
-  DEFAULT_DIFFICULTY,
   DEFAULT_SEEDS,
 } from "@spacesprotocol/fabric-core";
 
@@ -42,3 +42,12 @@ export type {
   EpochResult,
   HandleHint,
 } from "@spacesprotocol/fabric-core";
+
+// Re-export libveritas types for message building
+export {
+  Message,
+  MessageBuilder,
+  RecordSet,
+  Zone,
+  createOffchainData,
+} from "@spacesprotocol/react-native-libveritas";

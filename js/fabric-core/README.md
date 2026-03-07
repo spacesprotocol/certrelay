@@ -56,7 +56,7 @@ The core package defines a `VeritasProvider` interface. Two built-in adapters ar
 |---|---|
 | `resolve(handle)` | Resolve a single handle, returns `FabricZone` |
 | `resolveAll(handles)` | Resolve multiple handles, returns `Map<string, FabricZone>` |
-| `broadcast(msgBytes)` | Broadcast a signed message (mines PoW automatically) |
+| `broadcast(msgBytes)` | Broadcast a signed message |
 | `bootstrap()` | Discover peers and fetch anchors (called automatically) |
 | `updateAnchors(hash?)` | Refresh the anchor set |
 | `refreshPeers()` | Re-discover relay peers |

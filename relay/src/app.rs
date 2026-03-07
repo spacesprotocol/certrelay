@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::{
-    bootstrap, Config, ExtendedNetwork, PowGuard, Relay, ServiceRunner,
+    bootstrap, Config, ExtendedNetwork, Relay, ServiceRunner,
 };
 use crate::http::refresh_anchors;
 
@@ -37,10 +37,6 @@ struct Args {
     /// Act as a bootstrap relay
     #[arg(long, env = "CERTRELAY_BOOTSTRAP")]
     is_bootstrap: bool,
-
-    /// PoW difficulty (0 to disable)
-    #[arg(long, default_value = "20", env = "CERTRELAY_POW_DIFFICULTY")]
-    pow_difficulty: u32,
 
     /// HTTP header to read client IP from when behind a reverse proxy.
     /// Examples: "x-forwarded-for", "cf-connecting-ip", "x-real-ip"
@@ -85,7 +81,6 @@ pub async fn run(
 
     let mut config = Config::new(data_dir, args.chain);
     config.spaced_url = args.spaced_rpc_url;
-    config.pow = PowGuard::new(args.pow_difficulty);
     config.is_bootstrap = args.is_bootstrap;
     config.self_url = args.self_url;
     config.remote_ip_header = args.remote_ip_header;

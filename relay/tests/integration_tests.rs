@@ -7,7 +7,7 @@ use libveritas::msg::QueryContext;
 use libveritas::Veritas;
 use libveritas_testutil::fixture::*;
 use relay::{
-    AppState, Config, ExtendedNetwork, Handler, PeerInfo, PowGuard, Relay, SqliteStore,
+    AppState, Config, ExtendedNetwork, Handler, PeerInfo, Relay, SqliteStore,
 };
 use relay::anchor::AnchorStore;
 use spaces_protocol::slabel::SLabel;
@@ -46,7 +46,6 @@ async fn start_relay(chain_state: &ChainState) -> (String, Arc<AppState>) {
     let mut config = Config::new(PathBuf::from("/tmp/relay-test"), ExtendedNetwork::Testnet4);
     config.db_path = PathBuf::from(":memory:");
     config.spaced_url = Some("http://127.0.0.1:1".into());
-    config.pow = PowGuard::new(0);
 
     let relay = Relay::new(config).unwrap();
     *relay.state().handler.veritas.lock().unwrap() = build_veritas(chain_state);

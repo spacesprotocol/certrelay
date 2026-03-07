@@ -14,7 +14,6 @@ use crate::anchor::AnchorStore;
 use crate::handler::Handler;
 use crate::http::{self, AppState, DEFAULT_MAX_MESSAGE_SIZE};
 use crate::peer::PeerConfig;
-use crate::pow::PowGuard;
 use crate::spaced::SpacedClient;
 use crate::store::SqliteStore;
 
@@ -41,7 +40,6 @@ pub struct Config {
     pub self_url: Option<String>,
     pub capabilities: u32,
     pub is_bootstrap: bool,
-    pub pow: PowGuard,
     pub max_message_size: usize,
     pub peer_config: PeerConfig,
     /// HTTP header to read client IP from (e.g. "x-forwarded-for", "cf-connecting-ip").
@@ -59,7 +57,6 @@ impl Config {
             self_url: None,
             capabilities: 0,
             is_bootstrap: false,
-            pow: PowGuard::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             peer_config: PeerConfig::default(),
             remote_ip_header: None,
@@ -90,7 +87,6 @@ impl Relay {
             chain,
             config.peer_config,
         );
-        state.pow = config.pow;
         state.max_message_size = config.max_message_size;
         state.capabilities = config.capabilities;
         state.is_bootstrap = config.is_bootstrap;
