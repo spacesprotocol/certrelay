@@ -18,6 +18,29 @@ async fn test_bootstrap() {
 }
 
 #[tokio::test]
+async fn test_bootstrap_bad_anchor_set() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, _) = start_relay(&state).await;
+
+    let fake_hash = "cd00e292c5970d3c5e2f0ffa5171e555bc46bfc4faddfb4a418b6840b86e79a3";
+    let fabric = Fabric::with_seeds(&[url.as_str()])
+        .with_anchor_set(fake_hash);
+
+    let result = fabric.bootstrap().await;
+    assert!(result.is_err(), "bootstrap with bad anchor set should fail");
+
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("404") || err_msg.contains("not found"),
+        "error should indicate anchor set not found, got: {}",
+        err_msg
+    );
+}
+
+#[tokio::test]
 async fn test_broadcast() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
