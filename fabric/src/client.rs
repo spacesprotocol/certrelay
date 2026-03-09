@@ -550,7 +550,6 @@ impl RelayPool {
 
 #[derive(Debug)]
 pub enum Error {
-    Http(reqwest::Error),
     Decode(std::io::Error),
     Verify(MessageError),
     Relay { status: u16, body: String },
@@ -560,7 +559,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Http(e) => write!(f, "http error: {e}"),
             Error::Decode(e) => write!(f, "decode error: {e}"),
             Error::Verify(e) => write!(f, "verification error: {e}"),
             Error::Relay { status, body } => write!(f, "relay error ({status}): {body}"),
@@ -570,12 +568,6 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-impl From<reqwest::Error> for Error {
-    fn from(e: reqwest::Error) -> Self {
-        Error::Http(e)
-    }
-}
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
