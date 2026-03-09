@@ -42,6 +42,10 @@ struct Args {
     /// Examples: "x-forwarded-for", "cf-connecting-ip", "x-real-ip"
     #[arg(long, env = "CERTRELAY_REMOTE_IP_HEADER")]
     remote_ip_header: Option<String>,
+
+    /// Anchor refresh interval in seconds (default: 1800 = 30 minutes)
+    #[arg(long, default_value = "1800", env = "CERTRELAY_ANCHOR_REFRESH")]
+    anchor_refresh: u64,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -91,11 +95,12 @@ pub async fn run(
         bootstrap(relay.state()).await;
     }
 
-    // Refresh anchors from spaced every 30 minutes
+    // Refresh anchors from spaced periodically
     tokio::spawn({
         let state = relay.state().clone();
+        let refresh_secs = args.anchor_refresh;
         async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
             interval.tick().await; // skip immediate first tick
             loop {
                 interval.tick().await;
