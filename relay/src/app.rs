@@ -101,7 +101,6 @@ pub async fn run(
         let refresh_secs = args.anchor_refresh;
         async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
-            interval.tick().await; // skip immediate first tick
             loop {
                 interval.tick().await;
                 match refresh_anchors(&state).await {

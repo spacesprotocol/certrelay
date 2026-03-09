@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use libveritas::Veritas;
 use spaces_client::config::ExtendedNetwork;
-use spaces_client::jsonrpsee::http_client::HttpClientBuilder;
+use spaces_client::jsonrpsee::http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
 use spaces_protocol::bitcoin::BlockHash;
 use spaces_protocol::bitcoin::hashes::Hash as HashUtil;
@@ -74,7 +74,36 @@ impl Relay {
         let spaced_url = config.spaced_url.clone()
             .unwrap_or_else(|| ServiceRunner::default_spaced_url(config.network));
 
-        let rpc_client = HttpClientBuilder::default().build(&spaced_url)?;
+        let mut builder = HttpClientBuilder::default();
+        let url = if let Ok(parsed) = url::Url::parse(&spaced_url) {
+            if !parsed.username().is_empty() {
+                let credentials = format!(
+                    "{}:{}",
+                    parsed.username(),
+                    parsed.password().unwrap_or("")
+                );
+                let encoded = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    credentials,
+                );
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    "authorization",
+                    HeaderValue::from_str(&format!("Basic {encoded}"))?,
+                );
+                builder = builder.set_headers(headers);
+                let mut clean = parsed.clone();
+                clean.set_username("").ok();
+                clean.set_password(None).ok();
+                clean.to_string()
+            } else {
+                spaced_url
+            }
+        } else {
+            spaced_url
+        };
+
+        let rpc_client = builder.build(&url)?;
         let veritas = Veritas::new().with_anchors(config.anchors.clone())?;
         let anchor_store = AnchorStore::from_anchors(config.anchors);
 
