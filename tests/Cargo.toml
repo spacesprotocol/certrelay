@@ -1,0 +1,18 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+relay = { path = "../relay", features = ["testutil"] }
+axum = "0.8"
+fabric = { path = "../fabric" }
+libveritas = { workspace = true }
+libveritas_testutil = { workspace = true }
+spaces_protocol = { workspace = true }
+spaces_ptr = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+borsh = "1.6"
+hex = "0.4.3"

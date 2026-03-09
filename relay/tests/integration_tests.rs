@@ -10,6 +10,7 @@ use relay::{
     AppState, Config, ExtendedNetwork, Handler, PeerInfo, Relay, SqliteStore,
 };
 use relay::anchor::AnchorStore;
+use resolver::{AnchorResponse, HintsResponse};
 use spaces_protocol::slabel::SLabel;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -40,15 +41,27 @@ fn sync_veritas(handler: &Handler, state: &ChainState) {
     *handler.veritas.lock().unwrap() = build_veritas(state);
 }
 
+/// Collect the test anchors from a ChainState.
+fn test_anchors(state: &ChainState) -> Vec<spaces_ptr::RootAnchor> {
+    let mut anchors = state.anchors.clone();
+    anchors.push(state.chain.current_root_anchor());
+    anchors.sort_by(|a, b| b.block.height.cmp(&a.block.height));
+    anchors.dedup_by_key(|a| a.block.height);
+    anchors
+}
+
 /// Start a relay HTTP server on a random port.
 /// Returns (base_url, Arc<AppState>).
 async fn start_relay(chain_state: &ChainState) -> (String, Arc<AppState>) {
     let mut config = Config::new(PathBuf::from("/tmp/relay-test"), ExtendedNetwork::Testnet4);
     config.db_path = PathBuf::from(":memory:");
     config.spaced_url = Some("http://127.0.0.1:1".into());
+    config.anchors = test_anchors(chain_state);
 
     let relay = Relay::new(config).unwrap();
     *relay.state().handler.veritas.lock().unwrap() = build_veritas(chain_state);
+    *relay.state().handler.anchor_store.lock().unwrap() =
+        AnchorStore::from_anchors(test_anchors(chain_state));
 
     let state = relay.state().clone();
 
@@ -268,20 +281,212 @@ async fn test_relay_accepts_message() {
 
     let bundle = runner.build_bundle();
     let msg = state.message(vec![bundle]);
-    let msg_bytes = borsh::to_vec(&msg).unwrap();
+    let msg_bytes = msg.to_bytes();
 
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/message", url))
         .body(msg_bytes)
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "ok");
+
+    let record = app_state.handler.store.get_handle("alice@sovereign").unwrap();
+    assert!(record.is_some(), "alice should be stored after HTTP submission");
+}
+
+#[tokio::test]
+async fn test_broadcast_invalid_bytes() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, _) = start_relay(&state).await;
+
+    let client = reqwest::Client::new();
+
+    // Empty body
+    let resp = client
+        .post(format!("{}/message", url))
+        .body(vec![])
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "invalid message format");
+
+    // Garbage bytes
+    let resp = client
+        .post(format!("{}/message", url))
+        .body(vec![0xDE, 0xAD, 0xBE, 0xEF])
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "invalid message format");
+}
+
+#[tokio::test]
+async fn test_broadcast_response_readable() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, _) = start_relay(&state).await;
+
+    let bundle = runner.build_bundle();
+    let msg = state.message(vec![bundle]);
+    let msg_bytes = msg.to_bytes();
+
+    // Use the same reqwest setup as the Fabric client
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/message", url))
+        .body(msg_bytes)
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    assert!(status.is_success(), "expected 2xx, got {}", status);
+
+    // This is the path that would produce "error decoding response body"
+    let body_text = resp.text().await.expect("should be able to read response body as text");
+    assert_eq!(body_text, "ok");
+}
+
+#[tokio::test]
+async fn test_peers_endpoint() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, app_state) = start_relay(&state).await;
+
+    // Add a peer and mark it alive (peers endpoint only returns verified peers)
+    {
+        let mut peers = app_state.peers.lock().await;
+        peers.announce(&PeerInfo {
+            source_ip: IpAddr::from([10, 0, 0, 2]),
+            url: "http://relay2.example.com".to_string(),
+            capabilities: 0,
+        });
+        peers.mark_alive("http://relay2.example.com");
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/peers", url))
         .send()
         .await
         .unwrap();
 
     assert_eq!(resp.status().as_u16(), 200);
 
-    let record = app_state.handler.store.get_handle("alice@sovereign").unwrap();
-    assert!(record.is_some(), "alice should be stored after HTTP submission");
+    // Should parse as valid JSON array of PeerInfo
+    let peers: Vec<PeerInfo> = resp.json().await
+        .expect("peers response should be valid JSON");
+    assert!(!peers.is_empty(), "should have at least one peer");
+}
+
+#[tokio::test]
+async fn test_anchors_endpoint() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, _) = start_relay(&state).await;
+
+    let client = reqwest::Client::new();
+
+    // HEAD /anchors should return headers
+    let resp = client
+        .head(format!("{}/anchors", url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    let root = resp.headers().get("x-anchor-root")
+        .expect("should have x-anchor-root header")
+        .to_str().unwrap();
+    assert!(!root.is_empty(), "anchor root should not be empty");
+
+    let height = resp.headers().get("x-anchor-height")
+        .expect("should have x-anchor-height header")
+        .to_str().unwrap();
+    assert!(!height.is_empty(), "anchor height should not be empty");
+
+    // GET /anchors should return valid JSON
+    let resp = client
+        .get(format!("{}/anchors", url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    let anchor_set: AnchorResponse = resp.json().await
+        .expect("anchors response should be valid JSON AnchorResponse");
+    assert!(!anchor_set.entries.is_empty(), "should have anchor entries");
+    assert!(anchor_set.root_matches(), "anchor root hash should match");
+
+    // GET /anchors?root=<hex> should return the same set
+    let root_hex = hex::encode(anchor_set.root);
+    let resp = client
+        .get(format!("{}/anchors?root={}", url, root_hex))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    let fetched: AnchorResponse = resp.json().await
+        .expect("anchors response with root param should be valid JSON");
+    assert_eq!(fetched.root, anchor_set.root, "fetched anchor root should match");
+}
+
+#[tokio::test]
+async fn test_hints_endpoint() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, _) = start_relay(&state).await;
+
+    // Submit message first
+    let bundle = runner.build_bundle();
+    let msg = state.message(vec![bundle]);
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/message", url))
+        .body(msg.to_bytes())
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    // Query hints
+    let resp = client
+        .get(format!("{}/hints?q=alice@sovereign,bob@sovereign,@sovereign", url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    let hints: HintsResponse = resp.json().await
+        .expect("hints response should be valid JSON");
+    assert!(!hints.hints.is_empty(), "should have space hints");
+    assert!(hints.anchor_tip > 0, "anchor_tip should be > 0");
 }
 
 #[tokio::test]
@@ -306,12 +511,13 @@ async fn test_gossip_propagation() {
 
     let bundle = runner.build_bundle();
     let msg = state.message(vec![bundle]);
-    let msg_bytes = borsh::to_vec(&msg).unwrap();
+    let msg_bytes = msg.to_bytes();
 
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/message", url_a))
         .body(msg_bytes)
+        .header("content-type", "application/octet-stream")
         .send()
         .await
         .unwrap();

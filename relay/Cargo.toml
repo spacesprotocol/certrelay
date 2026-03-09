@@ -30,5 +30,9 @@ yuki = {git = "https://github.com/imperviousinc/yuki.git" }
 env_logger = "0.11.9"
 hex = "0.4.3"
 
+[features]
+testutil = []
+
 [dev-dependencies]
 libveritas_testutil = {workspace = true}
+spaces_ptr = { workspace = true }

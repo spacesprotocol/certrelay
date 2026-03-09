@@ -112,17 +112,23 @@ impl Fabric {
     /// Discover peers from seed URLs and populate the relay pool.
     async fn bootstrap_peers(&self) -> Result<()> {
         let mut urls: HashSet<String> = self.seeds.iter().cloned().collect();
+        let mut last_err: Option<Error> = None;
 
         for seed in &self.seeds {
-            if let Ok(peers) = fetch_peers(&self.http, seed).await {
-                for peer in peers {
-                    urls.insert(peer.url);
+            match fetch_peers(&self.http, seed).await {
+                Ok(peers) => {
+                    for peer in peers {
+                        urls.insert(peer.url);
+                    }
+                }
+                Err(e) => {
+                    last_err = Some(e);
                 }
             }
         }
 
         if urls.is_empty() {
-            return Err(Error::NoPeers);
+            return Err(last_err.unwrap_or(Error::NoPeers));
         }
 
         self.pool.refresh(urls);
@@ -222,7 +228,9 @@ impl Fabric {
         for url in relays {
             match self.post_binary(&format!("{url}/query"), &body).await {
                 Ok(bytes) => {
-                    let msg = Message::from_slice(&bytes).map_err(Error::Decode)?;
+                    let msg = Message::from_slice(&bytes).map_err(|e| Error::Decode(
+                        std::io::Error::new(e.kind(), format!("{url}/query: decoding message: {e}"))
+                    ))?;
                     match self.veritas.lock().unwrap().verify_message(ctx, msg) {
                         Ok(res) => {
                             self.pool.mark_alive(url);
@@ -295,9 +303,10 @@ impl Fabric {
         let mut last_err = Error::NoPeers;
 
         for url in &urls {
+            let prove_url = format!("{url}/chain-proof");
             let result = self
                 .http
-                .post(format!("{url}/chain-proof"))
+                .post(&prove_url)
                 .body(body.clone())
                 .header("content-type", "application/json")
                 .send()
@@ -306,7 +315,12 @@ impl Fabric {
             match result {
                 Ok(resp) if resp.status().is_success() => {
                     self.pool.mark_alive(url);
-                    return Ok(resp.bytes().await?.to_vec());
+                    return resp.bytes().await.map(|b| b.to_vec()).map_err(|e| {
+                        Error::Decode(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("POST {prove_url}: reading response: {e}"),
+                        ))
+                    });
                 }
                 Ok(resp) => {
                     self.pool.mark_failed(url);
@@ -316,7 +330,10 @@ impl Fabric {
                 }
                 Err(e) => {
                     self.pool.mark_failed(url);
-                    last_err = Error::Http(e);
+                    last_err = Error::Decode(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        format!("POST {prove_url}: {e}"),
+                    ));
                 }
             }
         }
@@ -336,9 +353,10 @@ impl Fabric {
         let mut any_ok = false;
         let mut last_err = None;
         for url in &urls {
+            let msg_url = format!("{url}/message");
             let result = self
                 .http
-                .post(format!("{url}/message"))
+                .post(&msg_url)
                 .body(msg_bytes.to_vec())
                 .header("content-type", "application/octet-stream")
                 .send()
@@ -351,7 +369,10 @@ impl Fabric {
                     let body = resp.text().await.unwrap_or_default();
                     last_err = Some(Error::Relay { status, body });
                 }
-                Err(e) => last_err = Some(Error::Http(e)),
+                Err(e) => last_err = Some(Error::Decode(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!("POST {msg_url}: {e}"),
+                ))),
             }
         }
 
@@ -401,7 +422,11 @@ impl Fabric {
             .body(body.to_vec())
             .header("content-type", "application/octet-stream")
             .send()
-            .await?;
+            .await
+            .map_err(|e| Error::Decode(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                format!("POST {url}: {e}"),
+            )))?;
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
@@ -409,7 +434,10 @@ impl Fabric {
             return Err(Error::Relay { status, body });
         }
 
-        Ok(resp.bytes().await?.to_vec())
+        resp.bytes().await.map(|b| b.to_vec()).map_err(|e| Error::Decode(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("POST {url}: reading response: {e}"),
+        )))
     }
 }
 
@@ -438,13 +466,21 @@ fn epoch_hint_from_zone(zone: &Zone) -> Option<EpochHint> {
 }
 
 async fn fetch_peers(http: &reqwest::Client, relay_url: &str) -> Result<Vec<PeerInfo>> {
-    let resp = http.get(format!("{relay_url}/peers")).send().await?;
+    let url = format!("{relay_url}/peers");
+    let resp = http.get(&url).send().await
+        .map_err(|e| Error::Decode(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            format!("GET {url}: {e}"),
+        )))?;
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
         return Err(Error::Relay { status, body });
     }
-    Ok(resp.json().await?)
+    resp.json().await.map_err(|e| Error::Decode(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("GET {url}: {e}"),
+    )))
 }
 
 
@@ -560,10 +596,18 @@ impl From<MessageError> for Error {
 /// Returns: (<root-hash>, <peers...>)
 async fn fetch_latest_anchor_set_hash(http: &reqwest::Client, peers: &[String]) -> Result<(String, Vec<String>)> {
     let mut votes: HashMap<(String, u32), Vec<String>> = HashMap::new();
+    let mut last_err: Option<Error> = None;
 
     for url in peers {
-        let Ok(resp) = http.head(format!("{url}/anchors")).send().await else {
-            continue;
+        let resp = match http.head(format!("{url}/anchors")).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = Some(Error::Decode(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!("HEAD {url}/anchors: {e}"),
+                )));
+                continue;
+            }
         };
 
         let root = resp
@@ -588,7 +632,7 @@ async fn fetch_latest_anchor_set_hash(http: &reqwest::Client, peers: &[String]) 
         .into_iter()
         .max_by_key(|((_, height), peers)| (peers.len(), *height))
         .map(|((root, _), peers)| (root, peers))
-        .ok_or_else(|| Error::NoPeers)
+        .ok_or_else(|| last_err.unwrap_or(Error::NoPeers))
 }
 
 async fn fetch_anchor_set(
@@ -598,13 +642,17 @@ async fn fetch_anchor_set(
 ) -> Result<Vec<spaces_ptr::RootAnchor>> {
     let mut last_err: Option<Error> = None;
     for url in peers {
+        let anchor_url = format!("{url}/anchors?root={hash}");
         let resp = match http
-            .get(format!("{url}/anchors?root={hash}"))
+            .get(&anchor_url)
             .send()
             .await {
             Ok(r) => r,
             Err(e) => {
-                last_err = Some(e.into());
+                last_err = Some(Error::Decode(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!("GET {anchor_url}: {e}"),
+                )));
                 continue;
             }
         };
@@ -619,12 +667,19 @@ async fn fetch_anchor_set(
         let anchor_set: AnchorResponse = match resp.json().await {
             Ok(a) => a,
             Err(e) => {
-                last_err = Some(e.into());
+                last_err = Some(Error::Decode(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("GET {anchor_url}: {e}"),
+                )));
                 continue;
             }
         };
 
         if !anchor_set.root_matches() {
+            last_err = Some(Error::Decode(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("GET {anchor_url}: anchor root mismatch"),
+            )));
             continue;
         }
 

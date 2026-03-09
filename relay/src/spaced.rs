@@ -7,7 +7,7 @@ use spaces_ptr::{ChainProofRequest, RootAnchor};
 
 pub struct SpacedClient {
     client: HttpClient,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testutil"))]
     mock_chain_proof: Option<ChainProof>,
 }
 
@@ -15,12 +15,12 @@ impl SpacedClient {
     pub fn new(client: HttpClient) -> Self {
         Self {
             client,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testutil"))]
             mock_chain_proof: None,
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testutil"))]
     pub fn mock(chain_proof: ChainProof) -> Self {
         use spaces_client::jsonrpsee::http_client::HttpClientBuilder;
         Self {
@@ -34,7 +34,7 @@ impl SpacedClient {
     }
 
     pub async fn prove(&self, req: &ChainProofRequest) -> anyhow::Result<ChainProof> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testutil"))]
         if let Some(mock_chain_proof) = &self.mock_chain_proof {
             return Ok(mock_chain_proof.clone())
         }
