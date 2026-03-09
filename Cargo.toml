@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["fabric", "relay"]
+members = ["fabric", "relay", "tests"]
 
 [workspace.dependencies]
 libveritas = { git = "https://github.com/spacesprotocol/libveritas.git" }
