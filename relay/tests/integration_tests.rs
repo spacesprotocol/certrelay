@@ -452,6 +452,17 @@ async fn test_anchors_endpoint() {
     let fetched: AnchorResponse = resp.json().await
         .expect("anchors response with root param should be valid JSON");
     assert_eq!(fetched.root, anchor_set.root, "fetched anchor root should match");
+
+    // GET /anchors?root=<nonexistent> should return 404
+    let fake_root = "cd00e292c5970d3c5e2f0ffa5171e555bc46bfc4faddfb4a418b6840b86e79a3";
+    let resp = client
+        .get(format!("{}/anchors?root={}", url, fake_root))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "anchor set not found");
 }
 
 #[tokio::test]

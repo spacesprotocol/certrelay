@@ -7,7 +7,7 @@
 
 #[cfg(feature = "client")]
 pub mod client;
-mod seeds;
+pub mod seeds;
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -64,8 +64,25 @@ pub struct HintsResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchorResponse {
+    #[serde(with = "hex_bytes32")]
     pub root: [u8;32],
     pub entries: Vec<RootAnchor>,
+}
+
+mod hex_bytes32 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+    where D: Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        bytes.try_into().map_err(|_| serde::de::Error::custom("expected 32 bytes"))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
