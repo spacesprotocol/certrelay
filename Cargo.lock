@@ -691,7 +691,7 @@ dependencies = [
 [[package]]
 name = "borsh_utils"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#e07e7f3d4ed1d6033da43a675df3bc591010ae8b"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4f9699a2e177be2e52611bf25d1111780d8417f5"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -1992,7 +1992,7 @@ dependencies = [
 [[package]]
 name = "libveritas"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#8d8b80573f9f45e7f68dd0aef53fc354a5c6ba14"
+source = "git+https://github.com/spacesprotocol/libveritas.git#321fd123fa9079c2fe8b86bd8ef1a2ce555303d5"
 dependencies = [
  "base64 0.22.1",
  "borsh",
@@ -2009,7 +2009,7 @@ dependencies = [
 [[package]]
 name = "libveritas_testutil"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#8d8b80573f9f45e7f68dd0aef53fc354a5c6ba14"
+source = "git+https://github.com/spacesprotocol/libveritas.git#321fd123fa9079c2fe8b86bd8ef1a2ce555303d5"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -2026,7 +2026,7 @@ dependencies = [
 [[package]]
 name = "libveritas_zk"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#8d8b80573f9f45e7f68dd0aef53fc354a5c6ba14"
+source = "git+https://github.com/spacesprotocol/libveritas.git#321fd123fa9079c2fe8b86bd8ef1a2ce555303d5"
 dependencies = [
  "borsh",
  "serde",
@@ -3144,9 +3144,9 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "schannel"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891d81b926048e76efe18581bf793546b4c0eaf8448d72be8de2bbee5fd166e1"
+checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
 ]
@@ -3399,7 +3399,7 @@ dependencies = [
 [[package]]
 name = "spaces_client"
 version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#e07e7f3d4ed1d6033da43a675df3bc591010ae8b"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4f9699a2e177be2e52611bf25d1111780d8417f5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3432,7 +3432,7 @@ dependencies = [
 [[package]]
 name = "spaces_protocol"
 version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#e07e7f3d4ed1d6033da43a675df3bc591010ae8b"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4f9699a2e177be2e52611bf25d1111780d8417f5"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -3443,7 +3443,7 @@ dependencies = [
 [[package]]
 name = "spaces_ptr"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#e07e7f3d4ed1d6033da43a675df3bc591010ae8b"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4f9699a2e177be2e52611bf25d1111780d8417f5"
 dependencies = [
  "bech32",
  "bitcoin",
@@ -3457,7 +3457,7 @@ dependencies = [
 [[package]]
 name = "spaces_wallet"
 version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#e07e7f3d4ed1d6033da43a675df3bc591010ae8b"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4f9699a2e177be2e52611bf25d1111780d8417f5"
 dependencies = [
  "anyhow",
  "bdk_wallet",
