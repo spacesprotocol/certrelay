@@ -3,7 +3,7 @@ import {
   reactNativeProvider,
 } from "@spacesprotocol/fabric-core";
 import type { FabricOptions as CoreOptions } from "@spacesprotocol/fabric-core";
-import { Veritas, Anchors, QueryContext, Message, Lookup, zoneToBytes, zoneToJson } from "@spacesprotocol/react-native-libveritas";
+import { Veritas, Anchors, QueryContext, Message, Lookup, zoneToBytes, zoneToJson, createCertificateChain } from "@spacesprotocol/react-native-libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
 
@@ -19,6 +19,7 @@ export class Fabric extends FabricCore {
         Lookup,
         zoneToBytes,
         zoneToJson,
+        createCertificateChain,
       }),
     });
   }
@@ -52,6 +53,7 @@ export {
   VerifiedMessage,
   Veritas,
   Zone,
+  createCertificateChain,
   createOffchainRecords,
   decodeCertificate,
   decodeZone,

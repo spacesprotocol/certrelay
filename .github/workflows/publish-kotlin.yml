@@ -31,15 +31,35 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
-      - name: Add Maven Central publishing
+      - name: Create publish build file
         run: |
-          cat >> build.gradle.kts << 'GRADLE'
+          cat > build.gradle.kts << 'GRADLE'
+          import java.util.Base64
 
-          // --- CI publishing ---
-          plugins.apply("maven-publish")
-          plugins.apply("signing")
+          plugins {
+              kotlin("jvm") version "2.0.21"
+              kotlin("plugin.serialization") version "2.0.21"
+              `maven-publish`
+              signing
+          }
+
+          group = "org.spacesprotocol"
+
+          repositories {
+              mavenCentral()
+          }
+
+          dependencies {
+              compileOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260323000045")
+              implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+              compileOnly("fr.acinq.secp256k1:secp256k1-kmp:0.17.3")
+          }
+
+          kotlin {
+              jvmToolchain(21)
+          }
 
           val libVersion: String = project.findProperty("version") as? String ?: "0.1.0"
 
@@ -93,7 +113,7 @@ jobs:
                           name = "Authorization"
                           val user = System.getenv("CENTRAL_PORTAL_USERNAME") ?: ""
                           val pass = System.getenv("CENTRAL_PORTAL_PASSWORD") ?: ""
-                          value = "Bearer " + java.util.Base64.getEncoder().encodeToString("$user:$pass".toByteArray())
+                          value = "Bearer " + Base64.getEncoder().encodeToString("$user:$pass".toByteArray())
                       }
                       authentication {
                           create<HttpHeaderAuthentication>("header")

@@ -53,7 +53,7 @@ fun main(args: Array<String>) {
     }
 
     for (handle in handles) {
-        val zone = zones[handle]
+        val zone = zones.find { it.handle == handle }
         if (zone == null) {
             System.err.println("$handle: not found")
             continue

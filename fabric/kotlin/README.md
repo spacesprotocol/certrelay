@@ -4,29 +4,27 @@ Kotlin/JVM client for resolving handles and broadcasting updates via the Spaces 
 
 ## Installation
 
-### Gradle (Kotlin DSL)
+The fabric package doesn't bundle libveritas or secp256k1 — you add the right variant for your platform.
+
+### JVM (desktop / server)
 
 ```kotlin
 dependencies {
     implementation("org.spacesprotocol:fabric:0.1.0")
-
-    // Pick the right libveritas variant:
-    implementation("org.spacesprotocol:libveritas-jvm:0.1.0")   // JVM
-    // or: implementation("org.spacesprotocol:libveritas:0.1.0") // Android (AAR)
-
-    // For signing support (BIP-340 Schnorr via ACINQ secp256k1-kmp):
+    implementation("org.spacesprotocol:libveritas-jvm:0.1.0")
     implementation("fr.acinq.secp256k1:secp256k1-kmp:0.17.3")
-    runtimeOnly("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.17.3")   // JVM
-    // or: runtimeOnly("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.17.3") // Android
+    runtimeOnly("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.17.3")
 }
 ```
 
-### Gradle (Groovy)
+### Android
 
-```groovy
+```kotlin
 dependencies {
-    implementation 'org.spacesprotocol:fabric:0.1.0'
-    implementation 'org.spacesprotocol:libveritas-jvm:0.1.0'
+    implementation("org.spacesprotocol:fabric:0.1.0")
+    implementation("org.spacesprotocol:libveritas:0.1.0")          // AAR with bundled native libs
+    implementation("fr.acinq.secp256k1:secp256k1-kmp:0.17.3")
+    implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.17.3")
 }
 ```
 
