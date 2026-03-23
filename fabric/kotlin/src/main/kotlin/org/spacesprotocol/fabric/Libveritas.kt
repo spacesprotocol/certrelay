@@ -12,7 +12,6 @@ typealias Veritas = org.spacesprotocol.libveritas.Veritas
 typealias QueryContext = org.spacesprotocol.libveritas.QueryContext
 typealias VerifiedMessage = org.spacesprotocol.libveritas.VerifiedMessage
 typealias Lookup = org.spacesprotocol.libveritas.Lookup
-typealias Certificate = org.spacesprotocol.libveritas.VeritasCertificate
 typealias RecordSet = org.spacesprotocol.libveritas.RecordSet
 typealias Record = org.spacesprotocol.libveritas.Record
 typealias DataUpdateEntry = org.spacesprotocol.libveritas.DataUpdateEntry
