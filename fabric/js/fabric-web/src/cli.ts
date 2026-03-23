@@ -45,7 +45,7 @@ async function main() {
   const zones = await fabric.resolveAll(handles);
 
   for (const handle of handles) {
-    const zone = zones.get(handle);
+    const zone = zones.find((z) => z.handle === handle);
     if (!zone) {
       process.stderr.write(`${handle}: not found\n`);
       continue;

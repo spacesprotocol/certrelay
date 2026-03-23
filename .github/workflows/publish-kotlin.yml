@@ -38,8 +38,6 @@ jobs:
           cat >> build.gradle.kts << 'GRADLE'
 
           // --- CI publishing ---
-          import java.util.Base64
-
           plugins.apply("maven-publish")
           plugins.apply("signing")
 
@@ -95,7 +93,7 @@ jobs:
                           name = "Authorization"
                           val user = System.getenv("CENTRAL_PORTAL_USERNAME") ?: ""
                           val pass = System.getenv("CENTRAL_PORTAL_PASSWORD") ?: ""
-                          value = "Bearer " + Base64.getEncoder().encodeToString("$user:$pass".toByteArray())
+                          value = "Bearer " + java.util.Base64.getEncoder().encodeToString("$user:$pass".toByteArray())
                       }
                       authentication {
                           create<HttpHeaderAuthentication>("header")
