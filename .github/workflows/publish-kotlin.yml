@@ -1,0 +1,133 @@
+name: Publish Kotlin
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fabric/kotlin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Add Maven Central publishing
+        run: |
+          cat >> build.gradle.kts << 'GRADLE'
+
+          // --- CI publishing ---
+          import java.util.Base64
+
+          plugins.apply("maven-publish")
+          plugins.apply("signing")
+
+          val libVersion: String = project.findProperty("version") as? String ?: "0.1.0"
+
+          java {
+              withSourcesJar()
+              withJavadocJar()
+          }
+
+          publishing {
+              publications {
+                  register<MavenPublication>("release") {
+                      groupId = "org.spacesprotocol"
+                      artifactId = "fabric"
+                      version = libVersion
+
+                      from(components["java"])
+
+                      pom {
+                          name.set("fabric")
+                          description.set("Fabric client for the certrelay network (JVM)")
+                          url.set("https://github.com/spacesprotocol/certrelay")
+
+                          licenses {
+                              license {
+                                  name.set("MIT")
+                                  url.set("https://github.com/spacesprotocol/certrelay/blob/main/LICENSE")
+                              }
+                          }
+
+                          developers {
+                              developer {
+                                  id.set("spacesprotocol")
+                                  name.set("spacesprotocol")
+                              }
+                          }
+
+                          scm {
+                              connection.set("scm:git:git://github.com/spacesprotocol/certrelay.git")
+                              developerConnection.set("scm:git:ssh://github.com/spacesprotocol/certrelay.git")
+                              url.set("https://github.com/spacesprotocol/certrelay")
+                          }
+                      }
+                  }
+              }
+
+              repositories {
+                  maven {
+                      name = "CentralPortal"
+                      url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+                      credentials(HttpHeaderCredentials::class) {
+                          name = "Authorization"
+                          val user = System.getenv("CENTRAL_PORTAL_USERNAME") ?: ""
+                          val pass = System.getenv("CENTRAL_PORTAL_PASSWORD") ?: ""
+                          value = "Bearer " + Base64.getEncoder().encodeToString("$user:$pass".toByteArray())
+                      }
+                      authentication {
+                          create<HttpHeaderAuthentication>("header")
+                      }
+                  }
+              }
+          }
+
+          signing {
+              val signingKey = System.getenv("GPG_SIGNING_KEY")
+              val signingPassword = System.getenv("GPG_PASSPHRASE")
+              if (signingKey != null && signingPassword != null) {
+                  useInMemoryPgpKeys(signingKey, signingPassword)
+                  sign(publishing.publications["release"])
+              }
+          }
+          GRADLE
+
+      - name: Build and publish to Maven Central
+        run: |
+          gradle wrapper
+          ./gradlew build publish \
+            -Pversion="${{ steps.version.outputs.version }}"
+        env:
+          CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
+          CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Finalize deployment on Central Portal
+        run: |
+          AUTH=$(echo -n "${{ secrets.CENTRAL_PORTAL_USERNAME }}:${{ secrets.CENTRAL_PORTAL_PASSWORD }}" | base64)
+          curl -f -X POST \
+            -H "Authorization: Bearer $AUTH" \
+            "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/org.spacesprotocol?publishing_type=automatic"

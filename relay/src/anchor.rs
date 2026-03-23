@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use spaces_ptr::RootAnchor;
+use spaces_nums::RootAnchor;
 use resolver::AnchorResponse;
 
 const ANCHOR_SET_SIZE : usize = 60;

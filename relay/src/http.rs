@@ -21,12 +21,8 @@ use tokio::sync::Mutex;
 
 pub use governor::Quota;
 pub use resolver::{Announcement, EpochHint, PeerInfo, Query, QueryRequest};
-use spaces_ptr::ChainProofRequest;
+use spaces_nums::ChainProofRequest;
 
-use libveritas::Veritas;
-use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
-
-use crate::anchor::AnchorStore;
 use crate::handler::Handler;
 use crate::peer::{PeerConfig, PeerTable};
 use crate::spaced::SpacedClient;
@@ -138,6 +134,8 @@ impl AppState {
 
 /// Build the router with all routes.
 pub fn router(state: Arc<AppState>) -> Router {
+    let cors = tower_http::cors::CorsLayer::permissive();
+
     Router::new()
         .route("/message", post(handle_message))
         .route("/announce", post(handle_announce))
@@ -146,6 +144,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/anchors", get(handle_anchors))
         .route("/hints", get(handle_hints))
         .route("/chain-proof", post(handle_chain_proof))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -179,11 +178,11 @@ async fn handle_message(
 ) -> impl IntoResponse {
     let ip = client_ip(&addr, &headers, &state.remote_ip_header);
     if state.limiters.message.check_key(&ip).is_err() {
-        return (StatusCode::TOO_MANY_REQUESTS, "rate limited");
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limited".to_string());
     }
 
     if body.len() > state.max_message_size {
-        return (StatusCode::PAYLOAD_TOO_LARGE, "message too large");
+        return (StatusCode::PAYLOAD_TOO_LARGE, "message too large".to_string());
     }
 
     // Deserialize the message
@@ -191,19 +190,19 @@ async fn handle_message(
         Ok(m) => m,
         Err(e) => {
             tracing::warn!("failed to deserialize message: {}", e);
-            return (StatusCode::BAD_REQUEST, "invalid message format");
+            return (StatusCode::BAD_REQUEST, "invalid message format".to_string());
         }
     };
 
     // Verify and store
     if let Err(e) = state.handler.handle_message(msg) {
         tracing::warn!("failed to handle message: {}", e);
-        return (StatusCode::BAD_REQUEST, "message verification failed");
+        return (StatusCode::BAD_REQUEST,  format!("rejected: {}", e));
     }
 
     gossip_message(state, body).await;
 
-    (StatusCode::OK, "ok")
+    (StatusCode::OK, "ok".to_string())
 }
 
 /// POST /announce - Announce a peer URL with capabilities.
@@ -519,12 +518,3 @@ pub async fn bootstrap_from(
     Ok(peers)
 }
 
-pub async fn refresh_anchors(state: &AppState) -> anyhow::Result<()> {
-    let mut anchors = state.chain.get_root_anchors().await?;
-    let anchor_store = AnchorStore::from_anchors(anchors.clone());
-    anchors.truncate(ROOT_ANCHORS_COUNT as _);
-    let new_veritas = Veritas::new().with_anchors(anchors)?;
-    *state.handler.veritas.lock().unwrap() = new_veritas;
-    *state.handler.anchor_store.lock().unwrap() = anchor_store;
-    Ok(())
-}

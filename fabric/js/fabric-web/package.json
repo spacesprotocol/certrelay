@@ -1,0 +1,36 @@
+{
+  "name": "@spacesprotocol/fabric-web",
+  "version": "0.1.0",
+  "description": "Certrelay client for browsers and Node.js (WASM backend)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./signing": {
+      "import": "./dist/signing.js",
+      "types": "./dist/signing.d.ts"
+    }
+  },
+  "bin": {
+    "fabric": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@spacesprotocol/fabric-core": "*",
+    "@spacesprotocol/libveritas": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.5.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,51 @@
+name: Publish Python
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fabric/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+          fi
+          # PEP 440: convert -dev. to .dev
+          PY_VERSION=$(echo "$VERSION" | sed 's/-dev\./\.dev/')
+          echo "version=$PY_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set version
+        run: |
+          sed -i "s/^version = \"0.1.0\"/version = \"${{ steps.version.outputs.version }}\"/" pyproject.toml
+
+      - name: Build package
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        run: |
+          pip install twine
+          twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}

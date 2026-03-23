@@ -5,3 +5,19 @@ target
 node_modules
 dist
 *.tsbuildinfo
+
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+
+# Kotlin
+build/
+.gradle/

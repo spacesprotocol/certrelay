@@ -10,6 +10,7 @@ pub mod spaced;
 
 pub mod anchor;
 
+use libveritas::{AnchorError, Veritas};
 pub use http::{
     bootstrap, bootstrap_from, router, AppState, Quota, RateLimitConfig, RateLimiters,
     BOOTSTRAP_RELAYS, DEFAULT_MAX_MESSAGE_SIZE,
@@ -21,5 +22,13 @@ pub use resolver::{capabilities, Announcement, EpochHint, PeerInfo, Query, Query
 pub use handler::{Handler};
 pub use relay::{Config, Relay, ServiceRunner};
 pub use spaces_client::config::ExtendedNetwork;
+use spaces_nums::RootAnchor;
 pub use spaced::SpacedClient;
 pub use store::SqliteStore;
+
+
+// Create veritas with disabled name expansion
+fn create_relay_veritas(anchors: Vec<RootAnchor>) -> Result<Veritas, AnchorError> {
+    Veritas::new()
+        .with_anchors(anchors)
+}

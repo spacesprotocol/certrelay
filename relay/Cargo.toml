@@ -10,11 +10,11 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 libveritas = { workspace = true }
-resolver = { path = "../fabric", package = "fabric", default-features = false }
+resolver = { path = "../fabric/rust", package = "fabric", default-features = false }
 spaces_protocol = { workspace = true }
 spaces_client = { workspace = true }
-spaces_ptr = { workspace = true }
-spacedb = { git = "https://github.com/spacesprotocol/spacedb.git", version = "0.0.11" }
+spaces_nums = { workspace = true }
+spacedb = { git = "https://github.com/spacesprotocol/spacedb.git", version = "0.0.12" }
 governor = "0.8"
 anyhow = "1.0"
 axum = { version = "0.8", features = ["json"] }
@@ -29,6 +29,7 @@ tracing = "0.1"
 yuki = {git = "https://github.com/imperviousinc/yuki.git" }
 env_logger = "0.11.9"
 hex = "0.4.3"
+tower-http = { version = "0.6", features = ["cors"] }
 base64 = "0.22"
 url = "2"
 
@@ -37,4 +38,4 @@ testutil = []
 
 [dev-dependencies]
 libveritas_testutil = {workspace = true}
-spaces_ptr = { workspace = true }
+spaces_nums = { workspace = true }

@@ -1,8 +1,8 @@
 use fabric::client::Fabric;
 use libveritas_testutil::fixture::*;
-use integration_tests::start_relay;
+use integration_tests::{start_relay};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_bootstrap() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -17,7 +17,7 @@ async fn test_bootstrap() {
     assert!(!fabric.needs_anchors(), "should have anchors after bootstrap");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_bootstrap_bad_anchor_set() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -40,7 +40,7 @@ async fn test_bootstrap_bad_anchor_set() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_broadcast() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -64,7 +64,7 @@ async fn test_broadcast() {
     assert!(root.is_some(), "@sovereign should be stored after broadcast");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_broadcast_error_details() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -88,7 +88,7 @@ async fn test_broadcast_error_details() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_resolve() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -116,7 +116,7 @@ async fn test_resolve() {
         .expect("should resolve alice@sovereign");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_resolve_all() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -143,11 +143,11 @@ async fn test_resolve_all() {
     let zones = fabric.resolve_all(&["alice@sovereign", "bob@sovereign"]).await
         .expect("should resolve multiple handles");
 
-    assert!(zones.contains_key("alice@sovereign") || zones.contains_key("@sovereign"),
+    assert!(zones.iter().any(|z| z.handle.to_string() == "alice@sovereign") || zones.iter().any(|z| z.handle.to_string() == "@sovereign"),
         "should contain alice or root zone");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_resolve_nonexistent() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -162,7 +162,7 @@ async fn test_resolve_nonexistent() {
     assert!(result.is_err(), "resolving nonexistent handle should fail");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_resolve_all_partial() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
@@ -185,15 +185,16 @@ async fn test_resolve_all_partial() {
 
     // Resolve one existing and one nonexistent handle
     let fabric = Fabric::with_seeds(&[url.as_str()]);
+    fabric.set_prefer_latest(false);
     let zones = fabric.resolve_all(&["alice@sovereign", "nobody@sovereign"]).await
         .expect("resolve_all should succeed with partial results");
 
     // Should return the existing handle, not the missing one
-    assert!(!zones.contains_key("nobody@sovereign"), "nonexistent handle should not be in results");
+    assert!(!zones.iter().any(|z| z.handle.to_string() == "nobody@sovereign"), "nonexistent handle should not be in results");
     assert!(zones.len() >= 1, "should have at least the existing handle");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_broadcast_then_resolve() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
