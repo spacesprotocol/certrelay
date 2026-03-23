@@ -26,14 +26,15 @@ fn build_veritas(state: &ChainState) -> Veritas {
     anchors.dedup_by_key(|a| a.block.height);
     Veritas::new()
         .with_anchors(anchors).unwrap()
-        .with_dev_mode(true)
 }
 
 /// Create a Handler wired to the test chain state with an in-memory store.
 fn setup_handler(state: &ChainState) -> Handler {
     let veritas = build_veritas(state);
     let store = SqliteStore::in_memory().unwrap();
-    Handler::new(veritas, store, AnchorStore::from_anchors(vec![]))
+    let mut handler = Handler::new(veritas, store, AnchorStore::from_anchors(vec![]));
+    handler.dev_mode = true;
+    handler
 }
 
 /// Replace the handler's Veritas with one built from the current chain state.
@@ -42,7 +43,7 @@ fn sync_veritas(handler: &Handler, state: &ChainState) {
 }
 
 /// Collect the test anchors from a ChainState.
-fn test_anchors(state: &ChainState) -> Vec<spaces_ptr::RootAnchor> {
+fn test_anchors(state: &ChainState) -> Vec<spaces_nums::RootAnchor> {
     let mut anchors = state.anchors.clone();
     anchors.push(state.chain.current_root_anchor());
     anchors.sort_by(|a, b| b.block.height.cmp(&a.block.height));
@@ -57,6 +58,7 @@ async fn start_relay(chain_state: &ChainState) -> (String, Arc<AppState>) {
     config.db_path = PathBuf::from(":memory:");
     config.spaced_url = Some("http://127.0.0.1:1".into());
     config.anchors = test_anchors(chain_state);
+    config.dev_mode = true;
 
     let relay = Relay::new(config).unwrap();
     *relay.state().handler.veritas.lock().unwrap() = build_veritas(chain_state);
@@ -175,16 +177,17 @@ fn test_incremental_zone_replacement() {
         let msg = chain_state.message(vec![bundle]);
 
         // Build the same context the handler will use
-        let spaces: Vec<SLabel> = msg.spaces.iter().map(|s| s.space.clone()).collect();
+        let spaces: Vec<SLabel> = msg.spaces.iter().map(|s| s.subject.clone()).collect();
         let ctx = build_ctx(&handler, &spaces);
 
         // Verify manually to get expected zones
         let veritas = build_veritas(&chain_state);
-        let verified = veritas.verify_message(&ctx, msg.clone()).unwrap();
+        let verified = veritas
+            .verify_with_options(&ctx, msg.clone(), libveritas::VERIFY_DEV_MODE).unwrap();
 
         // Update best_zones: only replace when the new zone is strictly better
         for zone in &verified.zones {
-            let key = zone.handle.to_string();
+            let key = zone.canonical.to_string();
             let new_bytes = borsh::to_vec(zone).unwrap();
             let dominated = best_zones.get(&key).map_or(true, |existing_bytes| {
                 let existing: Zone = borsh::from_slice(existing_bytes).unwrap();

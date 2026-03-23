@@ -41,9 +41,15 @@ Resolve multiple handles:
 
 ```ts
 const zones = await fabric.resolveAll(["alice@bitcoin", "bob@bitcoin"]);
-for (const [handle, zone] of zones) {
-  console.log(handle, zone.toJson());
+for (const zone of zones) {
+  console.log(zone.handle, zone.toJson());
 }
+```
+
+Export a `.spacecert` certificate chain:
+
+```ts
+const certBytes = await fabric.export("alice@bitcoin");
 ```
 
 Broadcast a signed message:

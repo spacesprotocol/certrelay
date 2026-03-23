@@ -2,15 +2,15 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use libveritas::Veritas;
 use spaces_client::config::ExtendedNetwork;
 use spaces_client::jsonrpsee::http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
 use spaces_protocol::bitcoin::BlockHash;
 use spaces_protocol::bitcoin::hashes::Hash as HashUtil;
 use spaces_protocol::constants::ChainAnchor;
-use spaces_ptr::RootAnchor;
+use spaces_nums::RootAnchor;
 use crate::anchor::AnchorStore;
+use crate::create_relay_veritas;
 use crate::handler::Handler;
 use crate::http::{self, AppState, DEFAULT_MAX_MESSAGE_SIZE};
 use crate::peer::PeerConfig;
@@ -20,7 +20,7 @@ use crate::store::SqliteStore;
 fn zero_anchor() -> RootAnchor {
     RootAnchor {
         spaces_root: [0u8; 32],
-        ptrs_root: None,
+        nums_root: None,
         block: ChainAnchor {
             hash: BlockHash::all_zeros(),
             height: 0,
@@ -44,6 +44,8 @@ pub struct Config {
     pub peer_config: PeerConfig,
     /// HTTP header to read client IP from (e.g. "x-forwarded-for", "cf-connecting-ip").
     pub remote_ip_header: Option<String>,
+    /// Accept fake ZK receipts (for testing only).
+    pub dev_mode: bool,
 }
 
 impl Config {
@@ -60,6 +62,7 @@ impl Config {
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             peer_config: PeerConfig::default(),
             remote_ip_header: None,
+            dev_mode: false,
         }
     }
 }
@@ -104,12 +107,13 @@ impl Relay {
         };
 
         let rpc_client = builder.build(&url)?;
-        let veritas = Veritas::new().with_anchors(config.anchors.clone())?;
+        let veritas = create_relay_veritas(config.anchors.clone())?;
         let anchor_store = AnchorStore::from_anchors(config.anchors);
 
         let store = SqliteStore::open(&config.db_path)?;
         let chain = SpacedClient::new(rpc_client);
-        let handler = Handler::new(veritas, store, anchor_store);
+        let mut handler = Handler::new(veritas, store, anchor_store);
+        handler.dev_mode = config.dev_mode;
 
         let mut state = AppState::new(
             handler,
@@ -128,11 +132,6 @@ impl Relay {
         Ok(Self {
             state: Arc::new(state),
         })
-    }
-
-    /// Fetch root anchors from the spaced node and update Veritas + AnchorStore.
-    pub async fn refresh_anchors(&self) -> anyhow::Result<()> {
-        http::refresh_anchors(&self.state).await
     }
 
     pub fn state(&self) -> &Arc<AppState> {

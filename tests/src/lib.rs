@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use libveritas::cert::{PtrsSubtree, SpacesSubtree};
+use libveritas::cert::{NumsSubtree, SpacesSubtree};
 use libveritas::msg::{ChainProof, QueryContext};
 use libveritas::Veritas;
 use libveritas_testutil::fixture::ChainState;
@@ -9,7 +10,9 @@ use relay::{
     AppState, Handler, PeerConfig, SqliteStore, SpacedClient, router,
 };
 use relay::anchor::AnchorStore;
+use relay::http::{Quota, RateLimitConfig};
 use spaces_protocol::slabel::SLabel;
+use spaces_nums::RootAnchor;
 
 /// Build a Veritas that includes the current root anchor so the tip
 /// matches the current chain height (important after Finalize steps).
@@ -20,11 +23,10 @@ pub fn build_veritas(state: &ChainState) -> Veritas {
     anchors.dedup_by_key(|a| a.block.height);
     Veritas::new()
         .with_anchors(anchors).unwrap()
-        .with_dev_mode(true)
 }
 
 /// Collect the test anchors from a ChainState.
-pub fn test_anchors(state: &ChainState) -> Vec<spaces_ptr::RootAnchor> {
+pub fn test_anchors(state: &ChainState) -> Vec<spaces_nums::RootAnchor> {
     let mut anchors = state.anchors.clone();
     anchors.push(state.chain.current_root_anchor());
     anchors.sort_by(|a, b| b.block.height.cmp(&a.block.height));
@@ -34,19 +36,21 @@ pub fn test_anchors(state: &ChainState) -> Vec<spaces_ptr::RootAnchor> {
 
 /// Build a mock chain proof from the test chain state.
 /// Returns the full spaces and ptrs subtrees so any query can be served.
-pub fn mock_chain_proof(state: &ChainState) -> ChainProof {
-    ChainProof {
+pub fn mock_chain_proof(state: &ChainState) -> (ChainProof, Vec<RootAnchor>) {
+    (ChainProof {
         anchor: state.chain.current_root_anchor().block,
         spaces: SpacesSubtree(state.chain.spaces_tree.clone()),
-        ptrs: PtrsSubtree(state.chain.ptrs_tree.clone()),
-    }
+        nums: NumsSubtree(state.chain.nums_tree.clone()),
+    }, test_anchors(state))
 }
 
 /// Create a Handler wired to the test chain state with an in-memory store.
 pub fn setup_handler(state: &ChainState) -> Handler {
     let veritas = build_veritas(state);
     let store = SqliteStore::in_memory().unwrap();
-    Handler::new(veritas, store, AnchorStore::from_anchors(vec![]))
+    let mut handler = Handler::new(veritas, store, AnchorStore::from_anchors(vec![]));
+    handler.dev_mode = true;
+    handler
 }
 
 /// Replace the handler's Veritas with one built from the current chain state.
@@ -71,10 +75,17 @@ pub async fn start_relay(chain_state: &ChainState) -> (String, Arc<AppState>) {
     let veritas = build_veritas(chain_state);
     let store = SqliteStore::in_memory().unwrap();
     let anchor_store = AnchorStore::from_anchors(test_anchors(chain_state));
-    let handler = Handler::new(veritas, store, anchor_store);
+    let mut handler = Handler::new(veritas, store, anchor_store);
+    handler.dev_mode = true;
     let chain = SpacedClient::mock(mock_chain_proof(chain_state));
 
-    let state = Arc::new(AppState::new(handler, chain, PeerConfig::default()));
+    let rate_config = RateLimitConfig {
+        message: Quota::per_second(NonZeroU32::new(100).unwrap()),
+        query: Quota::per_second(NonZeroU32::new(100).unwrap()),
+        announce: Quota::per_second(NonZeroU32::new(100).unwrap()),
+        peers: Quota::per_second(NonZeroU32::new(100).unwrap()),
+    };
+    let state = Arc::new(AppState::with_rate_limits(handler, chain, PeerConfig::default(), rate_config));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

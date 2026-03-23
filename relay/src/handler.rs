@@ -1,14 +1,12 @@
-use libveritas::cert::{ChainProofRequestUtils, HandleSubtree, Witness};
-use libveritas::msg::{self, Handle, QueryContext};
+use libveritas::cert::{Witness};
+use libveritas::msg::{self, QueryContext};
 use libveritas::sname::{Label, NameLike, SName};
 use libveritas::{ProvableOption, Veritas, Zone};
-use spacedb::Hash;
-use spacedb::subtree::SubTree;
 use spaces_protocol::slabel::SLabel;
-use spaces_ptr::ChainProofRequest;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Mutex;
+use libveritas::builder::{DataUpdateRequest, MessageBuilder};
 use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorStore;
 use crate::spaced::SpacedClient;
@@ -19,6 +17,7 @@ pub struct Handler {
     pub veritas: Mutex<Veritas>,
     pub anchor_store: Mutex<AnchorStore>,
     pub store: SqliteStore,
+    pub dev_mode: bool,
 }
 
 impl Handler {
@@ -27,20 +26,17 @@ impl Handler {
             veritas: Mutex::new(veritas),
             anchor_store: Mutex::new(anchor_store),
             store,
+            dev_mode: false,
         }
     }
 
-    /// Resolve queries into a certificate message.
-    ///
-    /// Takes a list of wire-format queries (plain strings) and builds a Message
-    /// containing the certificates and chain proofs needed to verify them.
     pub async fn resolve(
         &self,
         chain: &SpacedClient,
         queries: Vec<resolver::Query>,
     ) -> anyhow::Result<msg::Message> {
-        let mut bundles: Vec<msg::Bundle> = Vec::with_capacity(queries.len());
         let mut seen_spaces: HashSet<String> = HashSet::new();
+        let mut builder = MessageBuilder::new();
 
         for query in queries {
             if !seen_spaces.insert(query.space.clone()) {
@@ -55,19 +51,27 @@ impl Handler {
                 Some(record) => record,
                 None => continue,
             };
-            let mut receipt = match parent.cert.witness {
-                Witness::Root { receipt } => receipt,
-                _ => continue,
-            };
-
+            let parent_records = parent.records();
+            let parent_delegate_records = parent.delegate_records();
+            let mut parent_cert = parent.cert;
             // Skip receipt if client can verify from their cached epoch
             if query
                 .epoch_hint
                 .as_ref()
                 .is_some_and(|h| epoch_hint_verifiable_by(h, &parent.zone))
             {
-                receipt = None;
+                if let Witness::Root { receipt } = &mut parent_cert.witness {
+                    std::mem::take(receipt);
+                }
             }
+
+            builder.add_update(DataUpdateRequest {
+                handle: parent_cert.subject.clone(),
+                records: parent_records,
+                delegate_records: parent_delegate_records,
+            });
+            builder.add_cert(parent_cert);
+
             let unique_handles: Vec<String> = query
                 .handles
                 .iter()
@@ -81,83 +85,17 @@ impl Handler {
             let handle_refs: Vec<&str> = unique_handles.iter().map(|s| s.as_str()).collect();
             let handle_entries = self.store.get_handles(&handle_refs)?;
 
-            let mut certs_by_epoch: HashMap<Hash, msg::Epoch> = HashMap::new();
-            for record in handle_entries {
-                let (handle, handle_tree) = match record.cert.witness {
-                    Witness::Leaf {
-                        genesis_spk,
-                        handles,
-                        signature,
-                    } => {
-                        let name = match record.cert.subject.subspace() {
-                            Some(n) => n,
-                            None => continue,
-                        };
-                        (
-                            Handle {
-                                name,
-                                genesis_spk,
-                                data: record.zone.offchain_data,
-                                signature,
-                            },
-                            handles,
-                        )
-                    }
-                    _ => continue,
-                };
-
-                let epoch_root = match handle_tree.compute_root() {
-                    Ok(root) => root,
-                    Err(_) => continue,
-                };
-
-                let epoch = certs_by_epoch
-                    .entry(epoch_root)
-                    .or_insert_with(|| msg::Epoch {
-                        tree: HandleSubtree(SubTree::empty()),
-                        handles: vec![],
-                    });
-
-                let merged_tree = std::mem::replace(&mut epoch.tree.0, SubTree::empty());
-                epoch.tree.0 = match merged_tree.merge(handle_tree.0) {
-                    Ok(tree) => tree,
-                    Err(_) => continue,
-                };
-                epoch.handles.push(handle);
-            }
-
-            let delegate_offchain_data = match &parent.zone.delegate {
-                ProvableOption::Exists { value: d } => d.offchain_data.clone(),
-                _ => None,
-            };
-
-            bundles.push(msg::Bundle {
-                space,
-                receipt,
-                epochs: certs_by_epoch.into_values().collect(),
-                offchain_data: parent.zone.offchain_data.clone(),
-                delegate_offchain_data,
-            });
-        }
-
-        // Build chain proof request
-        let mut chain_req = ChainProofRequest {
-            spaces: vec![],
-            ptrs_keys: vec![],
-        };
-
-        for bundle in &bundles {
-            for epoch in &bundle.epochs {
-                chain_req.add_subtree(&bundle.space, &epoch.tree);
+            for handle in handle_entries {
+                builder.add_update(DataUpdateRequest {
+                    handle: handle.cert.subject.clone(),
+                    records: handle.records(),
+                    delegate_records: handle.delegate_records(),
+                });
+                builder.add_cert(handle.cert);
             }
         }
-
-        let chain = chain.prove(&chain_req).await?;
-
-        Ok(msg::Message {
-            chain,
-            spaces: bundles,
-        })
+        let chain = chain.prove(&builder.chain_proof_request()).await?;
+        Ok(builder.build(chain)?)
     }
 
     pub fn hints(&self, handles: &mut [&str]) -> anyhow::Result<resolver::HintsResponse> {
@@ -217,27 +155,54 @@ impl Handler {
     pub fn handle_message(&self, msg: msg::Message) -> anyhow::Result<()> {
         // Build query context from stored zones
         let mut ctx = QueryContext::new();
-        let spaces: Vec<&SLabel> = msg.spaces.iter().map(|s| &s.space).collect();
+        let spaces: Vec<&SLabel> = msg.spaces.iter().map(|s| &s.subject).collect();
         let zones = self.store.get_zones(&spaces)?;
         for zone in zones {
             ctx.add_zone(zone);
         }
 
         // Verify the message
-        let res = self.veritas.lock().unwrap().verify_message(&ctx, msg)?;
+        let options = if self.dev_mode { libveritas::VERIFY_DEV_MODE } else { 0 };
+        let res = self.veritas.lock().unwrap()
+            .verify_with_options(&ctx, msg, options)?;
 
-        // Build zone lookup by handle and epoch height by space
+        // Build zone lookup by canonical name and epoch height by space
         let mut zone_map: HashMap<String, &Zone> = HashMap::new();
         let mut epoch_map: HashMap<String, u32> = HashMap::new();
         for zone in &res.zones {
-            zone_map.insert(zone.handle.to_string(), zone);
+            zone_map.insert(zone.canonical.to_string(), zone);
             // Root zones (single-label like "@bitcoin") carry the commitment
-            if zone.handle.is_single_label() {
+            if zone.canonical.is_single_label() {
                 let epoch_height = match &zone.commitment {
                     ProvableOption::Exists { value: c } => c.onchain.block_height,
                     _ => 0,
                 };
-                epoch_map.insert(zone.handle.to_string(), epoch_height);
+                epoch_map.insert(zone.canonical.to_string(), epoch_height);
+            }
+        }
+
+        // Extract signatures from the original wire message
+        use libveritas::cert::Signature;
+        struct RecordSigs {
+            records_sig: Option<Signature>,
+            delegate_records_sig: Option<Signature>,
+        }
+        let mut sig_map: HashMap<String, RecordSigs> = HashMap::new();
+        for bundle in &res.message.spaces {
+            let space = bundle.subject.to_string();
+            sig_map.insert(space.clone(), RecordSigs {
+                records_sig: bundle.records.as_ref().map(|r| r.signature),
+                delegate_records_sig: bundle.delegate_records.as_ref().map(|r| r.signature),
+            });
+            for epoch in &bundle.epochs {
+                for handle in &epoch.handles {
+                    if let Ok(sname) = SName::join(&handle.name, &bundle.subject) {
+                        sig_map.insert(sname.to_string(), RecordSigs {
+                            records_sig: handle.records.as_ref().map(|r| r.signature),
+                            delegate_records_sig: None,
+                        });
+                    }
+                }
             }
         }
 
@@ -245,22 +210,26 @@ impl Handler {
         let updates: Vec<HandleRecord> = res
             .certificates()
             .filter_map(|cert| {
-                let zone = zone_map.get(&cert.subject.to_string())?;
+                let handle_str = cert.subject.to_string();
+                let zone = zone_map.get(&handle_str)?;
                 let space = cert.subject.space()?.to_string();
                 let epoch_height = epoch_map.get(&space).copied().unwrap_or(0);
-                let offchain_seq = zone.offchain_data.as_ref().map(|d| d.seq).unwrap_or(0);
+                let offchain_seq = zone.records.as_ref().and_then(|r| r.seq()).unwrap_or(0);
                 let delegate_offchain_seq = match &zone.delegate {
                     ProvableOption::Exists { value: d } => {
-                        d.offchain_data.as_ref().map(|d| d.seq).unwrap_or(0)
+                        d.records.as_ref().and_then(|r| r.seq()).unwrap_or(0)
                     }
                     _ => 0,
                 };
+                let sigs = sig_map.remove(&handle_str);
                 Some(HandleRecord {
                     cert,
                     zone: (*zone).clone(),
                     epoch_height,
                     offchain_seq,
                     delegate_offchain_seq,
+                    records_sig: sigs.as_ref().and_then(|s| s.records_sig),
+                    delegate_records_sig: sigs.as_ref().and_then(|s| s.delegate_records_sig),
                 })
             })
             .collect();

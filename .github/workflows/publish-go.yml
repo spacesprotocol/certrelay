@@ -1,0 +1,51 @@
+name: Publish Go
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ ! "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="v0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to fabric-go repo
+        env:
+          GH_TOKEN: ${{ secrets.GO_PUBLISH_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          mkdir go-publish
+          cp fabric/go/*.go go-publish/
+          cp fabric/go/go.mod go-publish/
+          cp fabric/go/go.sum go-publish/
+
+          # Copy CLI
+          mkdir -p go-publish/cmd/fabric
+          cp fabric/go/cmd/fabric/*.go go-publish/cmd/fabric/
+
+          cd go-publish
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Release ${VERSION}"
+          git tag "${VERSION}"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/spacesprotocol/fabric-go.git"
+          git push origin main --force
+          git push origin "${VERSION}"

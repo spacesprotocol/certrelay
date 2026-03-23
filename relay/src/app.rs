@@ -1,11 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-
-use crate::{
-    bootstrap, Config, ExtendedNetwork, Relay, ServiceRunner,
-};
-use crate::http::refresh_anchors;
+use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
+use crate::{bootstrap, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner};
+use crate::anchor::AnchorStore;
 
 #[derive(Parser)]
 #[command(name = "certrelay", about = "Certificate relay for the Spaces protocol")]
@@ -104,7 +102,7 @@ pub async fn run(
             loop {
                 interval.tick().await;
                 match refresh_anchors(&state).await {
-                    Ok(()) => tracing::info!("refreshed anchors"),
+                    Ok(()) => tracing::debug!("refreshed anchors"),
                     Err(e) => tracing::warn!("failed to refresh anchors: {e}"),
                 }
             }
@@ -123,4 +121,14 @@ pub async fn run(
             Ok(())
         }
     }
+}
+
+async fn refresh_anchors(state: &AppState) -> anyhow::Result<()> {
+    let mut anchors = state.chain.get_root_anchors().await?;
+    let anchor_store = AnchorStore::from_anchors(anchors.clone());
+    anchors.truncate(ROOT_ANCHORS_COUNT as _);
+    let new_veritas = create_relay_veritas(anchors)?;
+    *state.handler.veritas.lock().unwrap() = new_veritas;
+    *state.handler.anchor_store.lock().unwrap() = anchor_store;
+    Ok(())
 }
