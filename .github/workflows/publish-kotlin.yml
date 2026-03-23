@@ -41,7 +41,6 @@ jobs:
           plugins {
               kotlin("jvm") version "2.0.21"
               kotlin("plugin.serialization") version "2.0.21"
-              application
               `maven-publish`
               signing
           }
@@ -54,14 +53,8 @@ jobs:
 
           dependencies {
               compileOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260323000045")
-              runtimeOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260323000045")
               implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
               compileOnly("fr.acinq.secp256k1:secp256k1-kmp:0.17.3")
-              runtimeOnly("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.17.3")
-          }
-
-          application {
-              mainClass.set("org.spacesprotocol.fabric.cli.MainKt")
           }
 
           kotlin {
