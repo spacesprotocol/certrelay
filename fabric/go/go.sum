@@ -26,3 +26,5 @@ github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260322230130 h1:qaiS5v+VYrv
 github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260322230130/go.mod h1:HXnX2FNL43ueJuedsQwX9GF5jRHYZLqXYfFLWz900H8=
 github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260322235813 h1:b0aHfkYeK/6pho6KA2Sk+F37MyyK0liI/WMVh0M1a+E=
 github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260322235813/go.mod h1:HXnX2FNL43ueJuedsQwX9GF5jRHYZLqXYfFLWz900H8=
+github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260323230329 h1:ira8nG0uUdvkP8zGAL/aU45XamO+MAqeB+YjsqA5sL0=
+github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260323230329/go.mod h1:HXnX2FNL43ueJuedsQwX9GF5jRHYZLqXYfFLWz900H8=

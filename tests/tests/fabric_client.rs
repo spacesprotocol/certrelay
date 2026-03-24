@@ -1,6 +1,7 @@
-use fabric::client::Fabric;
+use fabric::client::{Fabric, TrustId};
 use libveritas_testutil::fixture::*;
 use integration_tests::{start_relay};
+use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_bootstrap() {
@@ -13,24 +14,22 @@ async fn test_bootstrap() {
     let fabric = Fabric::with_seeds(&[url.as_str()]);
 
     fabric.bootstrap().await.expect("bootstrap should succeed");
-    assert!(!fabric.needs_peers(), "should have peers after bootstrap");
-    assert!(!fabric.needs_anchors(), "should have anchors after bootstrap");
+    assert!(fabric.observed().is_some(), "should have observed trust set after bootstrap");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_bootstrap_bad_anchor_set() {
+async fn test_bootstrap_bad_trust_id() {
     let mut state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
     runner.run(&mut state);
 
     let (url, _) = start_relay(&state).await;
 
-    let fake_hash = "cd00e292c5970d3c5e2f0ffa5171e555bc46bfc4faddfb4a418b6840b86e79a3";
-    let fabric = Fabric::with_seeds(&[url.as_str()])
-        .with_anchor_set(fake_hash);
+    let fake_id = TrustId::from_str("cd00e292c5970d3c5e2f0ffa5171e555bc46bfc4faddfb4a418b6840b86e79a3").unwrap();
+    let fabric = Fabric::with_seeds(&[url.as_str()]);
 
-    let result = fabric.bootstrap().await;
-    assert!(result.is_err(), "bootstrap with bad anchor set should fail");
+    let result = fabric.trust(fake_id).await;
+    assert!(result.is_err(), "trust with bad id should fail");
 
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -140,10 +139,10 @@ async fn test_resolve_all() {
     // Resolve multiple handles
     let fabric = Fabric::with_seeds(&[url.as_str()]);
 
-    let zones = fabric.resolve_all(&["alice@sovereign", "bob@sovereign"]).await
+    let batch = fabric.resolve_all(&["alice@sovereign", "bob@sovereign"]).await
         .expect("should resolve multiple handles");
 
-    assert!(zones.iter().any(|z| z.handle.to_string() == "alice@sovereign") || zones.iter().any(|z| z.handle.to_string() == "@sovereign"),
+    assert!(batch.zones.iter().any(|z| z.handle.to_string() == "alice@sovereign") || batch.zones.iter().any(|z| z.handle.to_string() == "@sovereign"),
         "should contain alice or root zone");
 }
 
@@ -186,12 +185,12 @@ async fn test_resolve_all_partial() {
     // Resolve one existing and one nonexistent handle
     let fabric = Fabric::with_seeds(&[url.as_str()]);
     fabric.set_prefer_latest(false);
-    let zones = fabric.resolve_all(&["alice@sovereign", "nobody@sovereign"]).await
+    let batch = fabric.resolve_all(&["alice@sovereign", "nobody@sovereign"]).await
         .expect("resolve_all should succeed with partial results");
 
     // Should return the existing handle, not the missing one
-    assert!(!zones.iter().any(|z| z.handle.to_string() == "nobody@sovereign"), "nonexistent handle should not be in results");
-    assert!(zones.len() >= 1, "should have at least the existing handle");
+    assert!(!batch.zones.iter().any(|z| z.handle.to_string() == "nobody@sovereign"), "nonexistent handle should not be in results");
+    assert!(batch.zones.len() >= 1, "should have at least the existing handle");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -216,7 +215,7 @@ async fn test_broadcast_then_resolve() {
     fabric.resolve("alice@sovereign").await
         .expect("should resolve alice after broadcast");
 
-    let zones = fabric.resolve_all(&["alice@sovereign", "bob@sovereign"]).await
+    let batch = fabric.resolve_all(&["alice@sovereign", "bob@sovereign"]).await
         .expect("should resolve all after broadcast");
-    assert!(zones.len() >= 2, "should have at least 2 zones");
+    assert!(batch.zones.len() >= 2, "should have at least 2 zones");
 }

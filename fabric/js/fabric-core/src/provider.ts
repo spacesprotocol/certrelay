@@ -17,6 +17,7 @@ export interface FabricZone {
 export interface VerifiedMessageHandle {
   zones(): FabricZone[];
   certificates(): Uint8Array[];
+  rootId(): Uint8Array;
 }
 
 export interface QueryContextHandle {
@@ -26,10 +27,12 @@ export interface QueryContextHandle {
 
 export interface AnchorsHandle {
   computeAnchorSetHash(): Uint8Array;
+  computeTrustSet(): { id: Uint8Array; roots: Uint8Array[] };
 }
 
 export interface VeritasHandle {
   newestAnchor(): number;
+  computeTrustSet(): { id: Uint8Array; roots: Uint8Array[] };
   verifyWithOptions(
     ctx: QueryContextHandle,
     msg: Uint8Array,
@@ -43,12 +46,19 @@ export interface LookupHandle {
   expandZones(zones: FabricZone[]): FabricZone[];
 }
 
+export interface MessageBuilderHandle {
+  addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array): void;
+  chainProofRequest(): string;
+  build(chainProof: Uint8Array): { toBytes(): Uint8Array };
+}
+
 export interface VeritasProvider {
   createAnchors(entriesJson: any): AnchorsHandle;
   createVeritas(anchors: AnchorsHandle): VeritasHandle;
   createQueryContext(): QueryContextHandle;
   createLookup(names: string[]): LookupHandle;
   createCertificateChain(subject: string, certBytesList: Uint8Array[]): Uint8Array;
+  createMessageBuilder(): MessageBuilderHandle;
 }
 
 // ── Symbol for accessing the underlying native object ──
@@ -71,6 +81,7 @@ export interface WasmLibveritas {
   QueryContext: new () => any;
   Message: new (bytes: Uint8Array) => any;
   Lookup: new (names: string[]) => any;
+  MessageBuilder: new () => any;
   zoneToBytes(zone: any): Uint8Array;
   createCertificateChain(subject: string, certBytesList: Uint8Array[]): Uint8Array;
 }
@@ -91,6 +102,7 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
       return {
         [RAW]: anchors,
         computeAnchorSetHash: () => anchors.computeAnchorSetHash(),
+        computeTrustSet: () => anchors.computeTrustSet(),
       } as unknown as AnchorsHandle;
     },
     createVeritas(anchorsHandle) {
@@ -98,6 +110,7 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
       const v = new lib.Veritas(anchors);
       return {
         newestAnchor: () => v.newest_anchor(),
+        computeTrustSet: () => v.computeTrustSet(),
         verifyWithOptions(ctx, msg, options) {
           const vm = v.verifyWithOptions(getRaw(ctx), new lib.Message(msg), options);
           return {
@@ -115,6 +128,7 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
               const certs: any[] = vm.certificates();
               return certs.map((c: any) => new Uint8Array(c));
             },
+            rootId: () => vm.rootId(),
           };
         },
       };
@@ -153,6 +167,23 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
     createCertificateChain(subject, certBytesList) {
       return lib.createCertificateChain(subject, certBytesList);
     },
+    createMessageBuilder() {
+      const builder = new lib.MessageBuilder();
+      return {
+        addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array) {
+          builder.addHandle(chainBytes, recordsBytes);
+        },
+        chainProofRequest() {
+          return builder.chainProofRequest();
+        },
+        build(chainProof: Uint8Array) {
+          const msg = builder.build(chainProof);
+          return {
+            toBytes: () => msg.toBytes(),
+          };
+        },
+      };
+    },
   };
 }
 
@@ -164,6 +195,7 @@ export interface ReactNativeLibveritas {
   QueryContext: new () => any;
   Message: new (bytes: ArrayBuffer) => any;
   Lookup: new (names: string[]) => any;
+  MessageBuilder: new () => any;
   zoneToBytes(zone: any): ArrayBuffer;
   zoneToJson(zone: any): string;
   createCertificateChain(subject: string, certBytesList: ArrayBuffer[]): ArrayBuffer;
@@ -187,6 +219,13 @@ export function reactNativeProvider(
       return {
         [RAW]: anchors,
         computeAnchorSetHash: () => new Uint8Array(anchors.computeAnchorSetHash()),
+        computeTrustSet: () => {
+          const result = anchors.computeTrustSet();
+          return {
+            id: new Uint8Array(result.id),
+            roots: result.roots.map((r: ArrayBuffer) => new Uint8Array(r)),
+          };
+        },
       } as unknown as AnchorsHandle;
     },
     createVeritas(anchorsHandle) {
@@ -194,6 +233,13 @@ export function reactNativeProvider(
       const v = new lib.Veritas(anchors);
       return {
         newestAnchor: () => v.newestAnchor(),
+        computeTrustSet: () => {
+          const result = v.computeTrustSet();
+          return {
+            id: new Uint8Array(result.id),
+            roots: result.roots.map((r: ArrayBuffer) => new Uint8Array(r)),
+          };
+        },
         verifyWithOptions(ctx, msg, options) {
           const msgBuf = msg.buffer.slice(
             msg.byteOffset,
@@ -216,6 +262,7 @@ export function reactNativeProvider(
               ),
             certificates: () =>
               vm.certificates().map((c: any) => new Uint8Array(c)),
+            rootId: () => new Uint8Array(vm.rootId()),
           };
         },
       };
@@ -266,6 +313,35 @@ export function reactNativeProvider(
         return buf as ArrayBuffer;
       });
       return new Uint8Array(lib.createCertificateChain(subject, buffers));
+    },
+    createMessageBuilder() {
+      const builder = new lib.MessageBuilder();
+      return {
+        addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array) {
+          const chainBuf = chainBytes.buffer.slice(
+            chainBytes.byteOffset,
+            chainBytes.byteOffset + chainBytes.byteLength,
+          ) as ArrayBuffer;
+          const recordsBuf = recordsBytes.buffer.slice(
+            recordsBytes.byteOffset,
+            recordsBytes.byteOffset + recordsBytes.byteLength,
+          ) as ArrayBuffer;
+          builder.addHandle(chainBuf, recordsBuf);
+        },
+        chainProofRequest() {
+          return builder.chainProofRequest();
+        },
+        build(chainProof: Uint8Array) {
+          const proofBuf = chainProof.buffer.slice(
+            chainProof.byteOffset,
+            chainProof.byteOffset + chainProof.byteLength,
+          ) as ArrayBuffer;
+          const msg = builder.build(proofBuf);
+          return {
+            toBytes: () => new Uint8Array(msg.toBytes()),
+          };
+        },
+      };
     },
   };
 }

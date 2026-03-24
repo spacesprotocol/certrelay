@@ -3,7 +3,7 @@ import {
   reactNativeProvider,
 } from "@spacesprotocol/fabric-core";
 import type { FabricOptions as CoreOptions } from "@spacesprotocol/fabric-core";
-import { Veritas, Anchors, QueryContext, Message, Lookup, zoneToBytes, zoneToJson, createCertificateChain } from "@spacesprotocol/react-native-libveritas";
+import { Veritas, Anchors, QueryContext, Message, MessageBuilder, Lookup, zoneToBytes, zoneToJson, createCertificateChain } from "@spacesprotocol/react-native-libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
 
@@ -17,6 +17,7 @@ export class Fabric extends FabricCore {
         QueryContext,
         Message,
         Lookup,
+        MessageBuilder,
         zoneToBytes,
         zoneToJson,
         createCertificateChain,
@@ -40,6 +41,9 @@ export type {
   SpaceHint,
   EpochResult,
   HandleHint,
+  VerificationBadge,
+  Resolved,
+  ResolvedBatch,
 } from "@spacesprotocol/fabric-core";
 
 // Re-export libveritas types so consumers don't need a separate import

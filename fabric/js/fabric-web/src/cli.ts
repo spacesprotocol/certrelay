@@ -6,7 +6,7 @@ async function main() {
   const args = process.argv.slice(2);
   const handles: string[] = [];
   let seeds: string[] | undefined;
-  let anchorSetHash: string | undefined;
+  let trustId: string | undefined;
   let devMode = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -16,10 +16,10 @@ async function main() {
         if (i >= args.length) exitUsage("--seeds requires a value");
         seeds = args[i].split(",");
         break;
-      case "--anchor-set-hash":
+      case "--trust-id":
         i++;
-        if (i >= args.length) exitUsage("--anchor-set-hash requires a value");
-        anchorSetHash = args[i];
+        if (i >= args.length) exitUsage("--trust-id requires a value");
+        trustId = args[i];
         break;
       case "--dev-mode":
         devMode = true;
@@ -38,14 +38,17 @@ async function main() {
 
   const fabric = new Fabric({
     seeds: seeds ?? DEFAULT_SEEDS,
-    anchorSetHash,
     devMode,
   });
 
-  const zones = await fabric.resolveAll(handles);
+  if (trustId) {
+    await fabric.trust(trustId);
+  }
+
+  const batch = await fabric.resolveAll(handles);
 
   for (const handle of handles) {
-    const zone = zones.find((z) => z.handle === handle);
+    const zone = batch.zones.find((z) => z.handle === handle);
     if (!zone) {
       process.stderr.write(`${handle}: not found\n`);
       continue;
@@ -62,7 +65,7 @@ Resolve handles via the certrelay network.
 
 Options:
   --seeds <url,url,...>      Seed relay URLs (comma-separated)
-  --anchor-set-hash <hex>    Anchor set hash for verification
+  --trust-id <hex>           Trust ID for anchor verification
   --dev-mode                 Enable dev mode (skip finality checks)
   -h, --help                 Show this help`,
   );

@@ -6,6 +6,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	libveritas "github.com/spacesprotocol/libveritas-go"
 )
 
 var spacesSignedMsgPrefix = []byte("\x17Spaces Signed Message:\n")
@@ -33,6 +34,16 @@ func SignMessage(msg []byte, secretKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("schnorr sign: %w", err)
 	}
 	return sig.Serialize(), nil
+}
+
+// SignRecords signs a record set and returns borsh-encoded OffchainRecords.
+// Combines SignMessage + CreateOffchainRecords in a single call.
+func SignRecords(recordSet *libveritas.RecordSet, secretKey []byte) ([]byte, error) {
+	sig, err := SignMessage(recordSet.ToBytes(), secretKey)
+	if err != nil {
+		return nil, err
+	}
+	return libveritas.CreateOffchainRecords(recordSet, sig)
 }
 
 // VerifyMessage verifies a BIP-340 Schnorr signature over a message with the Spaces signed-message prefix.

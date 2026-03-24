@@ -319,7 +319,8 @@ async fn handle_anchors(
     let mut headers = HeaderMap::new();
     if let Some(latest) = store.latest() {
         let height = latest.entries.last().map(|a| a.block.height).unwrap_or(0);
-        if let Ok(v) = hex::encode(latest.root).parse() {
+        let trust_set = libveritas::compute_trust_set(&latest.entries);
+        if let Ok(v) = hex::encode(trust_set.id).parse() {
             headers.insert("x-anchor-root", v);
         }
         if let Ok(v) = height.to_string().parse() {

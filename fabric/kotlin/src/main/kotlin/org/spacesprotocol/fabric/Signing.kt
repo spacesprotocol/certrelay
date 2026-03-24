@@ -35,3 +35,12 @@ fun verifyMessage(msg: ByteArray, signature: ByteArray, pubkey: ByteArray): Bool
     val hash = hashSignable(msg)
     return Secp256k1.verifySchnorr(signature, hash, pubkey)
 }
+
+/**
+ * Sign a record set and return borsh-encoded OffchainRecords.
+ * Combines signMessage + createOffchainRecords in a single call.
+ */
+fun signRecords(recordSet: RecordSet, secretKey: ByteArray): ByteArray {
+    val sig = signMessage(recordSet.toBytes(), secretKey)
+    return createOffchainRecords(recordSet, sig)
+}

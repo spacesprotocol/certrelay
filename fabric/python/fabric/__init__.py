@@ -1,4 +1,12 @@
-from .client import Fabric, FabricError
+from .client import (
+    Fabric,
+    FabricError,
+    Resolved,
+    ResolvedBatch,
+    BADGE_ORANGE,
+    BADGE_UNVERIFIED,
+    BADGE_NONE,
+)
 from .pool import RelayPool
 from .hints import HintsResponse, CompareHints
 from .seeds import DEFAULT_SEEDS
@@ -9,6 +17,11 @@ import libveritas
 __all__ = [
     "Fabric",
     "FabricError",
+    "Resolved",
+    "ResolvedBatch",
+    "BADGE_ORANGE",
+    "BADGE_UNVERIFIED",
+    "BADGE_NONE",
     "RelayPool",
     "HintsResponse",
     "CompareHints",

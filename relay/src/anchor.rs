@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use libveritas::compute_trust_set;
 use spaces_nums::RootAnchor;
 use resolver::AnchorResponse;
 
@@ -12,8 +13,9 @@ impl AnchorStore {
     pub fn from_anchors(raw: Vec<RootAnchor>) -> Self {
         let mut anchors = HashMap::new();
         for chunk in raw.chunks(ANCHOR_SET_SIZE) {
-            let set = AnchorResponse::from_anchors(chunk.to_vec());
-            anchors.insert(set.root, set);
+            let expanded = AnchorResponse::from_anchors(chunk.to_vec());
+            let trust_set = compute_trust_set(chunk);
+            anchors.insert(trust_set.id, expanded);
         }
         Self { anchors }
     }
