@@ -49,16 +49,38 @@ func (e *FabricError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
+// VerificationBadge represents the trust state for a resolved handle.
+type VerificationBadge string
+
+const (
+	BadgeOrange     VerificationBadge = "orange"
+	BadgeUnverified VerificationBadge = "unverified"
+	BadgeNone       VerificationBadge = "none"
+)
+
+// Resolved wraps a single zone with its verification roots.
+type Resolved struct {
+	Zone  libveritas.Zone
+	Roots []string // hex-encoded root IDs
+}
+
+// ResolvedBatch wraps multiple zones with shared verification roots.
+type ResolvedBatch struct {
+	Zones []libveritas.Zone
+	Roots []string // hex-encoded root IDs
+}
+
 type Fabric struct {
-	client        *http.Client
-	pool          RelayPool
-	veritas       *libveritas.Veritas
-	zoneCache     map[string]libveritas.Zone
-	seeds         []string
-	anchorSetHash *string
-	preferLatest  bool
-	devMode       bool
-	mu            sync.Mutex
+	client       *http.Client
+	pool         RelayPool
+	veritas      *libveritas.Veritas
+	zoneCache    map[string]libveritas.Zone
+	seeds        []string
+	trusted      *libveritas.TrustSet
+	observed     *libveritas.TrustSet
+	preferLatest bool
+	devMode      bool
+	mu           sync.Mutex
 }
 
 func New(seeds []string) *Fabric {
@@ -73,15 +95,8 @@ func New(seeds []string) *Fabric {
 	}
 }
 
-func (f *Fabric) SetDevMode(v bool)       { f.devMode = v }
-func (f *Fabric) SetPreferLatest(v bool)   { f.preferLatest = v }
-func (f *Fabric) SetAnchorSetHash(h string) { f.anchorSetHash = &h }
-
-func (f *Fabric) AnchorSetHash() *string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.anchorSetHash
-}
+func (f *Fabric) SetDevMode(v bool)     { f.devMode = v }
+func (f *Fabric) SetPreferLatest(v bool) { f.preferLatest = v }
 
 func (f *Fabric) Relays() []string { return f.pool.URLs() }
 
@@ -93,6 +108,113 @@ func (f *Fabric) Veritas() *libveritas.Veritas {
 	return f.veritas
 }
 
+// Trust pins a specific trust ID (hex-encoded 32-byte hash).
+// Bootstraps peers if needed, then fetches the anchor set for this ID.
+func (f *Fabric) Trust(trustID string) error {
+	if f.pool.IsEmpty() {
+		if err := f.bootstrapPeers(); err != nil {
+			return err
+		}
+	}
+	return f.updateAnchors(trustID)
+}
+
+// TrustFromQr pins trust from a QR code payload (hex-encoded trust ID).
+func (f *Fabric) TrustFromQr(payload string) error {
+	return f.Trust(strings.TrimSpace(payload))
+}
+
+// Trusted returns the hex-encoded trusted trust ID, or empty string if none.
+func (f *Fabric) Trusted() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.trusted == nil {
+		return ""
+	}
+	return hex.EncodeToString(f.trusted.Id)
+}
+
+// Observed returns the hex-encoded observed trust ID, or empty string if none.
+func (f *Fabric) Observed() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.observed == nil {
+		return ""
+	}
+	return hex.EncodeToString(f.observed.Id)
+}
+
+// ClearTrusted clears the pinned trusted state.
+func (f *Fabric) ClearTrusted() {
+	f.mu.Lock()
+	f.trusted = nil
+	f.mu.Unlock()
+}
+
+// Badge returns the verification badge for a Resolved handle.
+func (f *Fabric) Badge(resolved Resolved) VerificationBadge {
+	return f.BadgeFor(resolved.Zone.Sovereignty, resolved.Roots)
+}
+
+// BadgeFor returns the verification badge given sovereignty and root IDs.
+func (f *Fabric) BadgeFor(sovereignty string, roots []string) VerificationBadge {
+	isTrusted := f.areRootsTrusted(roots)
+	isObserved := isTrusted || f.areRootsObserved(roots)
+
+	if isTrusted && sovereignty == "sovereign" {
+		return BadgeOrange
+	}
+	if isObserved && !isTrusted {
+		return BadgeUnverified
+	}
+	return BadgeNone
+}
+
+func (f *Fabric) areRootsTrusted(roots []string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.trusted == nil {
+		return false
+	}
+	for _, root := range roots {
+		rootBytes, err := hex.DecodeString(root)
+		if err != nil {
+			return false
+		}
+		if !containsRoot(f.trusted.Roots, rootBytes) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *Fabric) areRootsObserved(roots []string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.observed == nil {
+		return false
+	}
+	for _, root := range roots {
+		rootBytes, err := hex.DecodeString(root)
+		if err != nil {
+			return false
+		}
+		if !containsRoot(f.observed.Roots, rootBytes) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsRoot(roots [][]byte, target []byte) bool {
+	for _, r := range roots {
+		if bytes.Equal(r, target) {
+			return true
+		}
+	}
+	return false
+}
+
 // Bootstrap discovers peers and fetches anchors.
 func (f *Fabric) Bootstrap() error {
 	if f.pool.IsEmpty() {
@@ -101,11 +223,7 @@ func (f *Fabric) Bootstrap() error {
 		}
 	}
 	if f.veritas == nil || f.veritas.NewestAnchor() == 0 {
-		hash := ""
-		if f.anchorSetHash != nil {
-			hash = *f.anchorSetHash
-		}
-		return f.UpdateAnchors(hash)
+		return f.updateAnchors("")
 	}
 	return nil
 }
@@ -131,25 +249,31 @@ func (f *Fabric) bootstrapPeers() error {
 	return nil
 }
 
-func (f *Fabric) UpdateAnchors(hash string) error {
-	var anchorSetHash string
+func (f *Fabric) updateAnchors(trustID string) error {
+	isTrusted := trustID != ""
+	var hash string
 	var peers []string
 
-	if hash != "" {
-		anchorSetHash = hash
+	if isTrusted {
+		hash = trustID
 		peers = f.pool.ShuffledURLs(4)
 	} else {
-		h, p, err := f.fetchLatestAnchorSetHash()
+		h, p, err := f.fetchLatestTrustID()
 		if err != nil {
 			return err
 		}
-		anchorSetHash = h
+		hash = h
 		peers = p
 	}
 
-	anchors, err := f.fetchAnchors(anchorSetHash, peers)
+	anchors, err := f.fetchAnchors(hash, peers)
 	if err != nil {
 		return err
+	}
+
+	ts := anchors.ComputeTrustSet()
+	if hex.EncodeToString(ts.Id) != hash {
+		return &FabricError{Code: "decode", Message: "anchor root mismatch"}
 	}
 
 	v, err := libveritas.NewVeritas(anchors)
@@ -159,34 +283,38 @@ func (f *Fabric) UpdateAnchors(hash string) error {
 
 	f.mu.Lock()
 	f.veritas = v
-	f.anchorSetHash = &anchorSetHash
+	if isTrusted {
+		f.trusted = &ts
+	}
+	f.observed = &ts
 	f.mu.Unlock()
 	return nil
 }
 
 // Resolve a single handle. Supports dotted names like "hello.alice@bitcoin".
-func (f *Fabric) Resolve(handle string) (libveritas.Zone, error) {
-	zones, err := f.ResolveAll([]string{handle})
+func (f *Fabric) Resolve(handle string) (Resolved, error) {
+	batch, err := f.ResolveAll([]string{handle})
 	if err != nil {
-		return libveritas.Zone{}, err
+		return Resolved{}, err
 	}
-	for _, z := range zones {
+	for _, z := range batch.Zones {
 		if z.Handle == handle {
-			return z, nil
+			return Resolved{Zone: z, Roots: batch.Roots}, nil
 		}
 	}
-	return libveritas.Zone{}, &FabricError{Code: "decode", Message: handle + " not found"}
+	return Resolved{}, &FabricError{Code: "decode", Message: handle + " not found"}
 }
 
 // ResolveAll resolves multiple handles including dotted names.
-func (f *Fabric) ResolveAll(handles []string) ([]libveritas.Zone, error) {
+func (f *Fabric) ResolveAll(handles []string) (ResolvedBatch, error) {
 	lookup, err := libveritas.NewLookup(handles)
 	if err != nil {
-		return nil, fmt.Errorf("creating lookup: %w", err)
+		return ResolvedBatch{}, fmt.Errorf("creating lookup: %w", err)
 	}
 	defer lookup.Destroy()
 
 	var allZones []libveritas.Zone
+	var roots []string
 	var prevBatch []string
 	batch := lookup.Start()
 	for len(batch) > 0 {
@@ -195,25 +323,26 @@ func (f *Fabric) ResolveAll(handles []string) ([]libveritas.Zone, error) {
 		}
 		verified, err := f.resolveFlat(batch)
 		if err != nil {
-			return nil, err
+			return ResolvedBatch{}, err
 		}
 		zones := verified.Zones()
 		prevBatch = batch
 		var next []string
 		next, err = lookup.Advance(zones)
 		if err != nil {
-			return nil, fmt.Errorf("lookup advance: %w", err)
+			return ResolvedBatch{}, fmt.Errorf("lookup advance: %w", err)
 		}
 		allZones = append(allZones, zones...)
+		roots = append(roots, hex.EncodeToString(verified.RootId()))
 		batch = next
 	}
 
 	expanded, err := lookup.ExpandZones(allZones)
 	if err != nil {
-		return nil, fmt.Errorf("expand zones: %w", err)
+		return ResolvedBatch{}, fmt.Errorf("expand zones: %w", err)
 	}
 
-	return expanded, nil
+	return ResolvedBatch{Zones: expanded, Roots: roots}, nil
 }
 
 // Export resolves a handle and returns the raw certificate chain bytes.
@@ -246,6 +375,29 @@ func (f *Fabric) Export(handle string) ([]byte, error) {
 	}
 
 	return libveritas.CreateCertificateChain(handle, allCertBytes)
+}
+
+// Publish builds a message from a certificate chain and signed records, then broadcasts.
+// cert: .spacecert bytes from Export()
+// signedRecords: borsh-encoded OffchainRecords from SignRecords()
+func (f *Fabric) Publish(cert []byte, signedRecords []byte) error {
+	builder := libveritas.NewMessageBuilder()
+	if err := builder.AddHandle(cert, signedRecords); err != nil {
+		return fmt.Errorf("adding handle to builder: %w", err)
+	}
+	proofReqJSON, err := builder.ChainProofRequest()
+	if err != nil {
+		return fmt.Errorf("chain proof request: %w", err)
+	}
+	proofBytes, err := f.Prove([]byte(proofReqJSON))
+	if err != nil {
+		return err
+	}
+	msg, err := builder.Build(proofBytes)
+	if err != nil {
+		return fmt.Errorf("building message: %w", err)
+	}
+	return f.Broadcast(msg.ToBytes())
 }
 
 func (f *Fabric) resolveFlat(handles []string) (*libveritas.VerifiedMessage, error) {
@@ -503,7 +655,7 @@ func (f *Fabric) Broadcast(msgBytes []byte) error {
 
 // -- Internal fetch helpers --
 
-func (f *Fabric) fetchLatestAnchorSetHash() (string, []string, error) {
+func (f *Fabric) fetchLatestTrustID() (string, []string, error) {
 	type vote struct {
 		height int
 		peers  []string
@@ -554,11 +706,6 @@ func (f *Fabric) fetchLatestAnchorSetHash() (string, []string, error) {
 }
 
 func (f *Fabric) fetchAnchors(hash string, peers []string) (*libveritas.Anchors, error) {
-	expectedRoot, err := hex.DecodeString(hash)
-	if err != nil {
-		return nil, fmt.Errorf("invalid anchor hash: %w", err)
-	}
-
 	var lastErr error = &FabricError{Code: "no_peers", Message: "no peers available"}
 
 	for _, u := range peers {
@@ -589,12 +736,6 @@ func (f *Fabric) fetchAnchors(hash string, peers []string) (*libveritas.Anchors,
 		anchors, err := libveritas.AnchorsFromJson(string(entriesJSON))
 		if err != nil {
 			lastErr = &FabricError{Code: "decode", Message: fmt.Sprintf("parsing anchors: %s", err)}
-			continue
-		}
-
-		computed := anchors.ComputeAnchorSetHash()
-		if !bytes.Equal(computed, expectedRoot) {
-			lastErr = &FabricError{Code: "decode", Message: "anchor root mismatch"}
 			continue
 		}
 

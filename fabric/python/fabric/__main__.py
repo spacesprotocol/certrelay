@@ -12,7 +12,7 @@ def main():
     args = sys.argv[1:]
     handles: list[str] = []
     seeds: list[str] = []
-    anchor_set_hash = ""
+    trust_id = ""
     dev_mode = False
 
     i = 0
@@ -23,11 +23,11 @@ def main():
             if i >= len(args):
                 _exit_usage("--seeds requires a value")
             seeds = args[i].split(",")
-        elif arg == "--anchor-set-hash":
+        elif arg == "--trust-id":
             i += 1
             if i >= len(args):
-                _exit_usage("--anchor-set-hash requires a value")
-            anchor_set_hash = args[i]
+                _exit_usage("--trust-id requires a value")
+            trust_id = args[i]
         elif arg == "--dev-mode":
             dev_mode = True
         elif arg in ("--help", "-h"):
@@ -48,17 +48,18 @@ def main():
     f = Fabric(
         seeds=seeds,
         dev_mode=dev_mode,
-        anchor_set_hash=anchor_set_hash or None,
     )
 
     try:
-        zones = f.resolve_all(handles)
+        if trust_id:
+            f.trust(trust_id)
+        batch = f.resolve_all(handles)
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
     for handle in handles:
-        z = zones.get(handle)
+        z = next((z for z in batch.zones if z.handle == handle), None)
         if z is None:
             print(f"{handle}: not found", file=sys.stderr)
             continue
@@ -75,7 +76,7 @@ Resolve handles via the certrelay network.
 
 Options:
   --seeds <url,url,...>      Seed relay URLs (comma-separated)
-  --anchor-set-hash <hex>    Anchor set hash for verification
+  --trust-id <hex>           Trust ID for verification (hex-encoded)
   --dev-mode                 Enable dev mode (skip finality checks)
   -h, --help                 Show this help""")
 

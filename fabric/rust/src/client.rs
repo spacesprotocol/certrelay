@@ -1,17 +1,46 @@
+use std::cmp::PartialEq;
+use libveritas::builder::MessageBuilder;
 use libveritas::cert::CertificateChain;
-use libveritas::msg::QueryContext;
+use libveritas::msg::{ChainProof, OffchainRecords, QueryContext};
 use libveritas::sname::{NameLike, SName};
-use libveritas::{MessageError, ProvableOption, VerifiedMessage, Veritas, Zone};
+use libveritas::{compute_trust_set, MessageError, ProvableOption, SovereigntyState, TrustSet, VerifiedMessage, Veritas, Zone};
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-
+use serde::{Deserialize, Serialize};
 use crate::{AnchorResponse, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest};
 use crate::seeds::SEEDS;
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TrustId([u8; 32]);
+
+pub struct AnchorBundle {
+    pub trust_set: TrustSet,
+    pub anchors: Vec<spaces_nums::RootAnchor>,
+}
+
+impl fmt::Display for TrustId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl FromStr for TrustId {
+    type Err = hex::FromHexError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let bytes: [u8; 32] = hex::decode(s)?
+            .try_into()
+            .map_err(|_| hex::FromHexError::InvalidStringLength)?;
+
+        Ok(Self(bytes))
+    }
+}
 
 pub struct Fabric {
     http: reqwest::Client,
@@ -20,7 +49,10 @@ pub struct Fabric {
     dev_mode: bool,
     root_cache: dashmap::DashMap<String, Zone>,
     seeds: Vec<String>,
-    anchor_set_hash: Mutex<Option<String>>,
+    /// The currently pinned trust id, if any.
+    trusted: Mutex<Option<TrustSet>>,
+    /// The latest trust id observed from peers, if any.
+    observed: Mutex<Option<TrustSet>>,
     prefer_latest: AtomicBool,
 }
 
@@ -31,6 +63,29 @@ pub struct RelayPool {
 pub struct RelayEntry {
     pub url: String,
     pub failures: u32,
+}
+
+/// UI badge state derived from trust + sovereignty.
+pub enum VerificationBadge {
+    /// Sovereign handle verified against a trusted root. Show orange checkmark.
+    Orange,
+    /// Resolved against an observed root that differs from the trusted set.
+    /// Handle is in a newer state than what the user has pinned.
+    Unverified,
+    /// No badge. Pending, dependent, or no trust state applies.
+    None,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ResolvedBatch {
+    pub zones: Vec<Zone>,
+    pub roots: Vec<TrustId>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Resolved {
+    pub zone: Zone,
+    pub roots: Vec<TrustId>,
 }
 
 impl Fabric {
@@ -48,7 +103,8 @@ impl Fabric {
             dev_mode: false,
             root_cache: Default::default(),
             seeds: seeds.iter().map(|s| s.to_string()).collect(),
-            anchor_set_hash: Mutex::new(None),
+            observed: Mutex::new(None),
+            trusted: Mutex::new(None),
             prefer_latest: AtomicBool::new(true),
         }
     }
@@ -58,15 +114,76 @@ impl Fabric {
         self
     }
 
-    /// Specify a 32-byte anchor set hash to be loaded from peers
-    pub fn with_anchor_set(mut self, hash: &str) -> Self {
-        self.anchor_set_hash = Mutex::new(Some(hash.to_string()));
-        self
+    fn are_roots_trusted(&self, roots: &[TrustId]) -> bool {
+        let set = self.trusted.lock().unwrap();
+        let Some(trusted_set) = set.as_ref() else {
+            return false;
+        };
+        for root in roots {
+            if !trusted_set.roots.contains(&root.0) {
+                return false;
+            }
+        }
+       true
     }
 
-    /// Get the current anchor set hash, if any.
-    pub fn anchor_set_hash(&self) -> Option<String> {
-        self.anchor_set_hash.lock().unwrap().clone()
+    fn are_roots_observed(&self, roots: &[TrustId]) -> bool {
+        let set = self.observed.lock().unwrap();
+        let Some(trusted_set) = set.as_ref() else {
+            return false;
+        };
+        for root in roots {
+            if !trusted_set.roots.contains(&root.0) {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn badge(&self, resolved: &Resolved) -> VerificationBadge {
+        self.badge_for(resolved.zone.sovereignty, resolved.roots.as_slice())
+    }
+
+    pub fn badge_for(&self, sov: SovereigntyState, roots: &[TrustId]) -> VerificationBadge {
+        let is_trusted = self.are_roots_trusted(roots);
+        let is_observed = is_trusted || self.are_roots_observed(roots);
+
+        if is_trusted && matches!(sov, SovereigntyState::Sovereign) {
+            VerificationBadge::Orange
+        } else if is_observed && !is_trusted {
+            VerificationBadge::Unverified
+        } else {
+            VerificationBadge::None
+        }
+    }
+
+    /// Pin a specific trust id to be loaded from peers.
+    pub async fn trust(&self, trust_id: TrustId) -> Result<()> {
+        if self.needs_peers() {
+            self.bootstrap_peers().await?;
+        }
+        self.update_anchors(Some(trust_id)).await
+    }
+
+    /// The trusted trust id, pinned explicitly with trust()
+    pub fn trusted(&self) -> Option<TrustId> {
+        self.trusted.lock().unwrap().as_ref().map(|t| TrustId(t.id))
+    }
+
+    /// The latest trust id observed from peers, if any.
+    pub fn observed(&self) -> Option<TrustId> {
+        self.observed.lock().unwrap().as_ref().map(|t| TrustId(t.id))
+    }
+
+    /// Pin trust from a QR code payload (hex-encoded trust id).
+    pub async fn trust_from_qr(&self, payload: &str) -> Result<()> {
+        let trust_id = TrustId::from_str(payload.trim())?;
+        self.trust(trust_id).await
+    }
+
+    /// Clear the trusted state. Badge will never return Orange until trust is pinned again.
+    pub fn clear_trusted(&self) {
+        *self.trusted.lock().unwrap() = None;
     }
 
     /// Set whether to query multiple relays for freshness hints before resolving.
@@ -74,34 +191,39 @@ impl Fabric {
         self.prefer_latest.store(latest, Ordering::Relaxed);
     }
 
-    pub async fn update_anchors(&self, anchor_set_hash: Option<&str>) -> Result<()> {
-        let (anchor_set_hash, peers) = if let Some(hash) = anchor_set_hash {
+    async fn update_anchors(&self, trusted: Option<TrustId>) -> Result<()> {
+        let is_trusted = trusted.is_some();
+        let (id, peers) = if let Some(id) = trusted {
             let peers =  self.pool.shuffled_urls_n(4);
-            (hash.to_string(), peers)
+            (id, peers)
         } else {
-           fetch_latest_anchor_set_hash(
+            // fetches from bootstrap peers for untrusted for now
+           fetch_latest_trust_id(
                 &self.http,
                 &self.seeds
             ).await?
         };
 
-        let anchors = fetch_anchor_set(
-            &self.http, &anchor_set_hash, &peers).await?;
+        let ab = fetch_anchor_set(
+            &self.http, id, &peers).await?;
 
-        if let Ok(v) = Veritas::new().with_anchors(anchors) {
+        if let Ok(v) = Veritas::new().with_anchors(ab.anchors) {
             *self.veritas.lock().unwrap() = v;
-            *self.anchor_set_hash.lock().unwrap() = Some(anchor_set_hash);
+            if is_trusted {
+                *self.trusted.lock().unwrap() = Some(ab.trust_set.clone());
+            }
+            *self.observed.lock().unwrap() = Some(ab.trust_set);
         }
         Ok(())
     }
 
     /// Whether the client has no relays in its pool.
-    pub fn needs_peers(&self) -> bool {
+    fn needs_peers(&self) -> bool {
         self.pool.is_empty()
     }
 
     /// Whether the client has no anchors loaded for verification.
-    pub fn needs_anchors(&self) -> bool {
+    fn needs_anchors(&self) -> bool {
         self.veritas.lock().unwrap().newest_anchor() == 0
     }
 
@@ -111,8 +233,7 @@ impl Fabric {
             self.bootstrap_peers().await?;
         }
         if self.needs_anchors() {
-            let hash = self.anchor_set_hash.lock().unwrap().clone();
-            self.update_anchors(hash.as_deref()).await?;
+            self.update_anchors(None).await?;
         }
         Ok(())
     }
@@ -150,26 +271,31 @@ impl Fabric {
 
     /// Resolve a single handle and return its verified Zone.
     /// Supports dotted names like `hello.alice@bitcoin`.
-    pub async fn resolve(&self, handle: &str) -> Result<Zone> {
-        let zones = self.resolve_all(&[handle]).await?;
-        zones.into_iter()
+    pub async fn resolve(&self, handle: &str) -> Result<Resolved> {
+        let rb = self.resolve_all(&[handle]).await?;
+        let zone = rb.zones.into_iter()
             .find(|z| z.handle.to_string() == handle)
             .ok_or_else(|| {
                 Error::Decode(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("{handle} not found"),
                 ))
-            })
+            })?;
+        Ok(Resolved {
+            zone,
+            roots: rb.roots,
+        })
     }
 
     /// Resolve multiple handles, including nested names like `hello.alice@bitcoin`.
-    pub async fn resolve_all(&self, handles: &[&str]) -> Result<Vec<Zone>> {
+    pub async fn resolve_all(&self, handles: &[&str]) -> Result<ResolvedBatch> {
         let snames: Vec<SName> = handles.iter()
             .filter_map(|h| SName::try_from(*h).ok())
             .collect();
 
         let lookup = libveritas::names::Lookup::new(snames);
         let mut all_zones: Vec<Zone> = Vec::new();
+        let mut roots: Vec<TrustId> = Vec::new();
 
         let mut prev_batch: Vec<SName> = Vec::new();
         let mut batch: Vec<SName> = lookup.start();
@@ -184,10 +310,15 @@ impl Fabric {
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_zones.extend(verified.zones);
+            roots.push(TrustId(verified.root_id));
         }
 
         lookup.expand_zones(&mut all_zones);
-        Ok(all_zones)
+
+        Ok(ResolvedBatch {
+            zones: all_zones,
+            roots,
+        })
     }
 
     /// Export a certificate chain for a handle in `.spacecert` format.
@@ -449,6 +580,20 @@ impl Fabric {
         }
     }
 
+    /// Publish signed records with a certificate chain to the network.
+    ///
+    /// Takes `.spacecert` bytes (from `export()`) and signed records (from `sign_records()`).
+    /// Builds a message, fetches a chain proof, and broadcasts.
+    pub async fn publish(&self, cert: &[u8], records: OffchainRecords) -> Result<()> {
+        let chain = CertificateChain::from_slice(cert)?;
+        let mut builder = MessageBuilder::new();
+        builder.add_handle(chain, records);
+        let proof_bytes = self.prove(&builder.chain_proof_request()).await?;
+        let proof = ChainProof::from_slice(&proof_bytes)?;
+        let msg = builder.build(proof)?;
+        self.broadcast(&msg.to_bytes()).await
+    }
+
     /// Fetch the peer list from a random relay.
     pub async fn peers(&self) -> Result<Vec<PeerInfo>> {
         let urls = self.pool.shuffled_urls_n(1);
@@ -652,12 +797,16 @@ impl From<MessageError> for Error {
     }
 }
 
+impl From<hex::FromHexError> for Error {
+    fn from(e: hex::FromHexError) -> Self {
+        Error::Decode(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    }
+}
+
 /// Fetch latest anchor set hash from the specified set of peers
-/// this is only used if Fabric isn't initialized with an anchor set
-/// from a trusted source.
 ///
 /// Returns: (<root-hash>, <peers...>)
-async fn fetch_latest_anchor_set_hash(http: &reqwest::Client, peers: &[String]) -> Result<(String, Vec<String>)> {
+async fn fetch_latest_trust_id(http: &reqwest::Client, peers: &[String]) -> Result<(TrustId, Vec<String>)> {
     let mut votes: HashMap<(String, u32), Vec<String>> = HashMap::new();
     let mut last_err: Option<Error> = None;
 
@@ -691,21 +840,25 @@ async fn fetch_latest_anchor_set_hash(http: &reqwest::Client, peers: &[String]) 
         }
     }
 
-    votes
+    let (hash, peers) = votes
         .into_iter()
         .max_by_key(|((_, height), peers)| (peers.len(), *height))
         .map(|((root, _), peers)| (root, peers))
-        .ok_or_else(|| last_err.unwrap_or(Error::NoPeers))
+        .ok_or_else(|| last_err.unwrap_or(Error::NoPeers))?;
+
+    Ok((TrustId::from_str(&hash)?, peers))
 }
+
+
 
 async fn fetch_anchor_set(
     http: &reqwest::Client,
-    hash: &str,
+    trust_id: TrustId,
     peers: &[String],
-) -> Result<Vec<spaces_nums::RootAnchor>> {
+) -> Result<AnchorBundle> {
     let mut last_err: Option<Error> = None;
     for url in peers {
-        let anchor_url = format!("{url}/anchors?root={hash}");
+        let anchor_url = format!("{url}/anchors?root={trust_id}");
         let resp = match http
             .get(&anchor_url)
             .send()
@@ -738,7 +891,12 @@ async fn fetch_anchor_set(
             }
         };
 
-        if !anchor_set.root_matches() {
+        let ab = AnchorBundle {
+            trust_set: compute_trust_set(&anchor_set.entries),
+            anchors: anchor_set.entries,
+        };
+
+        if TrustId(ab.trust_set.id) != trust_id {
             last_err = Some(Error::Decode(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("GET {anchor_url}: anchor root mismatch"),
@@ -746,7 +904,7 @@ async fn fetch_anchor_set(
             continue;
         }
 
-        return Ok(anchor_set.entries);
+        return Ok(ab);
     }
 
     Err(last_err.unwrap_or(Error::NoPeers))

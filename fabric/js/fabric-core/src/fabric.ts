@@ -10,11 +10,22 @@ import type {
   VerifiedMessageHandle,
 } from "./provider.js";
 
+export type VerificationBadge = "orange" | "unverified" | "none";
+
+export interface Resolved {
+  zone: FabricZone;
+  roots: string[];  // hex-encoded
+}
+
+export interface ResolvedBatch {
+  zones: FabricZone[];
+  roots: string[];  // hex-encoded
+}
+
 export interface FabricOptions {
   provider: VeritasProvider;
   seeds?: string[];
   devMode?: boolean;
-  anchorSetHash?: string;
   preferLatest?: boolean;
 }
 
@@ -55,6 +66,10 @@ export class FabricError extends Error {
   }
 }
 
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 /**
  * Certrelay client for JavaScript/TypeScript.
  *
@@ -80,19 +95,15 @@ export class Fabric {
   private zoneCache = new Map<string, { bytes: Uint8Array; zone: FabricZone }>();
   private seeds: string[];
   private devMode: boolean;
-  private _anchorSetHash: string | null;
+  private _trusted: { id: Uint8Array; roots: Uint8Array[] } | null = null;
+  private _observed: { id: Uint8Array; roots: Uint8Array[] } | null = null;
   preferLatest: boolean;
 
   constructor(options: FabricOptions) {
     this.provider = options.provider;
     this.seeds = options.seeds ?? [...DEFAULT_SEEDS];
     this.devMode = options.devMode ?? false;
-    this._anchorSetHash = options.anchorSetHash ?? null;
     this.preferLatest = options.preferLatest ?? true;
-  }
-
-  get anchorSetHash(): string | null {
-    return this._anchorSetHash;
   }
 
   get relays(): string[] {
@@ -102,6 +113,85 @@ export class Fabric {
   /** The internal Veritas instance for offline verification. Null until bootstrap() is called. */
   getVeritas(): VeritasHandle | null {
     return this.veritas;
+  }
+
+  // ── Trust ──
+
+  /** Trust a specific trust ID. Fetches anchors matching the given ID. */
+  async trust(trustId: string): Promise<void> {
+    if (this.needsPeers()) {
+      await this.bootstrapPeers();
+    }
+    await this.updateAnchors(trustId);
+  }
+
+  /** Trust from a QR code payload (the payload is the trust ID hex string). */
+  async trustFromQr(payload: string): Promise<void> {
+    await this.trust(payload.trim());
+  }
+
+  /** Returns the hex-encoded trust ID if anchors have been explicitly trusted, or null. */
+  trusted(): string | null {
+    return this._trusted ? toHex(this._trusted.id) : null;
+  }
+
+  /** Returns the hex-encoded observed trust ID from the latest anchor fetch, or null. */
+  observed(): string | null {
+    return this._observed ? toHex(this._observed.id) : null;
+  }
+
+  /** Clear the trusted anchor set. */
+  clearTrusted(): void {
+    this._trusted = null;
+  }
+
+  /** Compute a verification badge for a resolved handle. */
+  badge(resolved: Resolved): VerificationBadge {
+    const json = resolved.zone.toJson();
+    const sovereignty: string = json?.sovereignty ?? "delegated";
+    return this.badgeFor(sovereignty, resolved.roots);
+  }
+
+  /** Compute a verification badge given sovereignty type and roots. */
+  badgeFor(sovereignty: string, roots: string[]): VerificationBadge {
+    const isTrusted = this.areRootsTrusted(roots);
+    const isObserved = isTrusted || this.areRootsObserved(roots);
+
+    if (isTrusted && sovereignty === "sovereign") {
+      return "orange";
+    }
+    if (isObserved && !isTrusted) {
+      return "unverified";
+    }
+    return "none";
+  }
+
+  private areRootsTrusted(roots: string[]): boolean {
+    if (!this._trusted) return false;
+    const trustedSet = new Set(this._trusted.roots.map(r => toHex(r)));
+    return roots.every(root => trustedSet.has(root));
+  }
+
+  private areRootsObserved(roots: string[]): boolean {
+    if (!this._observed) return false;
+    const observedSet = new Set(this._observed.roots.map(r => toHex(r)));
+    return roots.every(root => observedSet.has(root));
+  }
+
+  // ── Publish ──
+
+  /** Publish a certificate and signed records to the network. */
+  async publish(cert: Uint8Array, signedRecords: Uint8Array): Promise<void> {
+    await this.bootstrap();
+
+    const builder = this.provider.createMessageBuilder();
+    builder.addHandle(cert, signedRecords);
+
+    const chainProofReq = builder.chainProofRequest();
+    const chainProof = await this.prove(chainProofReq);
+    const msg = builder.build(chainProof);
+
+    await this.broadcast(msg.toBytes());
   }
 
   // ── Bootstrap ──
@@ -119,7 +209,7 @@ export class Fabric {
       await this.bootstrapPeers();
     }
     if (this.needsAnchors()) {
-      await this.updateAnchors(this._anchorSetHash ?? undefined);
+      await this.updateAnchors();
     }
   }
 
@@ -144,40 +234,51 @@ export class Fabric {
     this.pool.refresh(urls);
   }
 
-  async updateAnchors(hash?: string): Promise<void> {
-    let anchorSetHash: string;
+  async updateAnchors(trustId?: string): Promise<void> {
+    const isTrusted = !!trustId;
+    let hash: string;
     let peers: string[];
 
-    if (hash) {
-      anchorSetHash = hash;
+    if (trustId) {
+      hash = trustId;
       peers = this.pool.shuffledUrls(4);
     } else {
-      const result = await this.fetchLatestAnchorSetHash();
-      anchorSetHash = result.hash;
+      const result = await this.fetchLatestTrustId();
+      hash = result.hash;
       peers = result.peers;
     }
 
-    const anchors = await this.fetchAnchorSet(anchorSetHash, peers);
+    const anchors = await this.fetchAnchors(hash, peers);
+    const trustSet = anchors.computeTrustSet();
+
+    if (toHex(trustSet.id) !== hash) {
+      throw new FabricError("anchor root mismatch", "decode");
+    }
+
     this.veritas = this.provider.createVeritas(anchors);
-    this._anchorSetHash = anchorSetHash;
+    if (isTrusted) {
+      this._trusted = trustSet;
+    }
+    this._observed = trustSet;
   }
 
   // ── Resolution ──
 
   /** Resolve a single handle. Supports nested names like `hello.alice@bitcoin`. */
-  async resolve(handle: string): Promise<FabricZone> {
-    const zones = await this.resolveAll([handle]);
-    const zone = zones.find((z) => z.handle === handle);
+  async resolve(handle: string): Promise<Resolved> {
+    const batch = await this.resolveAll([handle]);
+    const zone = batch.zones.find((z) => z.handle === handle);
     if (!zone) {
       throw new FabricError(`${handle} not found`, "decode");
     }
-    return zone;
+    return { zone, roots: batch.roots };
   }
 
   /** Resolve multiple handles, including nested names like `hello.alice@bitcoin`. */
-  async resolveAll(handles: string[]): Promise<FabricZone[]> {
+  async resolveAll(handles: string[]): Promise<ResolvedBatch> {
     const lookup = this.provider.createLookup(handles);
     const allZones: FabricZone[] = [];
+    const roots: string[] = [];
 
     let prevBatch: string[] = [];
     let batch = lookup.start();
@@ -188,9 +289,13 @@ export class Fabric {
       prevBatch = batch;
       batch = lookup.advance(zones);
       allZones.push(...zones);
+      roots.push(toHex(verified.rootId()));
     }
 
-    return lookup.expandZones(allZones);
+    return {
+      zones: lookup.expandZones(allZones),
+      roots,
+    };
   }
 
   /** Export a certificate chain for a handle. */
@@ -372,7 +477,7 @@ export class Fabric {
 
   // ── Chain proofs ──
 
-  async prove(request: any): Promise<Uint8Array> {
+  async prove(request: string): Promise<Uint8Array> {
     await this.bootstrap();
     const urls = this.pool.shuffledUrls(4);
     let lastErr: Error = new FabricError("no peers available", "no_peers");
@@ -382,7 +487,7 @@ export class Fabric {
         const resp = await fetch(`${url}/chain-proof`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(request),
+          body: request,
         });
 
         if (!resp.ok) {
@@ -498,7 +603,7 @@ export class Fabric {
     return resp.json();
   }
 
-  private async fetchLatestAnchorSetHash(): Promise<{
+  private async fetchLatestTrustId(): Promise<{
     hash: string;
     peers: string[];
   }> {
@@ -544,11 +649,10 @@ export class Fabric {
     return best;
   }
 
-  private async fetchAnchorSet(
+  private async fetchAnchors(
     hash: string,
     peers: string[],
   ): Promise<AnchorsHandle> {
-    const expectedRoot = hexDecode(hash);
     let lastErr: Error = new FabricError("no peers available", "no_peers");
 
     for (const url of peers) {
@@ -565,15 +669,7 @@ export class Fabric {
         }
 
         const json = await resp.json();
-        const anchors = this.provider.createAnchors(json.entries);
-        const computedHash = anchors.computeAnchorSetHash();
-
-        if (!bytesEqual(computedHash, expectedRoot)) {
-          lastErr = new FabricError("anchor root mismatch", "decode");
-          continue;
-        }
-
-        return anchors;
+        return this.provider.createAnchors(json.entries);
       } catch (e) {
         lastErr =
           e instanceof FabricError
@@ -624,18 +720,3 @@ function parseHandle(handle: string): { space: string; label: string } {
   };
 }
 
-function hexDecode(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}

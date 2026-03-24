@@ -17,9 +17,14 @@ typealias Record = org.spacesprotocol.libveritas.Record
 typealias DataUpdateEntry = org.spacesprotocol.libveritas.DataUpdateEntry
 typealias CommitmentState = org.spacesprotocol.libveritas.CommitmentState
 typealias DelegateState = org.spacesprotocol.libveritas.DelegateState
+typealias TrustSet = org.spacesprotocol.libveritas.TrustSet
 typealias VeritasException = org.spacesprotocol.libveritas.VeritasException
 typealias InternalException = org.spacesprotocol.libveritas.InternalException
 
 /** Re-export the top-level helper so callers can use it without a libveritas import. */
 fun createCertificateChain(subject: String, certBytesList: List<ByteArray>): ByteArray =
     org.spacesprotocol.libveritas.createCertificateChain(subject, certBytesList)
+
+/** Re-export createOffchainRecords so callers can use it without a libveritas import. */
+fun createOffchainRecords(recordSet: RecordSet, signature: ByteArray): ByteArray =
+    org.spacesprotocol.libveritas.createOffchainRecords(recordSet, signature)

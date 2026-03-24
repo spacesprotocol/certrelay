@@ -21,6 +21,11 @@ from .hints import (
 from .pool import RelayPool
 
 
+BADGE_ORANGE = "orange"
+BADGE_UNVERIFIED = "unverified"
+BADGE_NONE = "none"
+
+
 class FabricError(Exception):
     def __init__(self, code: str, message: str, status: int = 0):
         self.code = code
@@ -28,6 +33,18 @@ class FabricError(Exception):
         self.status = status
         super().__init__(f"{code}: {message}" if status == 0
                          else f"{code} ({status}): {message}")
+
+
+@dataclass
+class Resolved:
+    zone: lv.Zone
+    roots: list[str]  # hex-encoded root IDs
+
+
+@dataclass
+class ResolvedBatch:
+    zones: list[lv.Zone]
+    roots: list[str]  # hex-encoded root IDs
 
 
 @dataclass
@@ -68,26 +85,21 @@ class Fabric:
         seeds: Optional[list[str]] = None,
         *,
         dev_mode: bool = False,
-        anchor_set_hash: Optional[str] = None,
         prefer_latest: bool = True,
     ):
         self._seeds = seeds or list(DEFAULT_SEEDS)
         self._dev_mode = dev_mode
-        self._anchor_set_hash = anchor_set_hash
         self._prefer_latest = prefer_latest
         self._pool = RelayPool()
         self._veritas: Optional[lv.Veritas] = None
+        self._trusted: Optional[lv.TrustSet] = None
+        self._observed: Optional[lv.TrustSet] = None
         self._zone_cache: dict[str, lv.Zone] = {}
         self._lock = threading.Lock()
 
     @property
     def relays(self) -> list[str]:
         return self._pool.urls()
-
-    @property
-    def anchor_set_hash(self) -> Optional[str]:
-        with self._lock:
-            return self._anchor_set_hash
 
     @property
     def veritas(self) -> Optional[lv.Veritas]:
@@ -97,16 +109,56 @@ class Fabric:
 
     # -- Public API --
 
-    def resolve(self, handle: str) -> lv.Zone:
-        zones = self.resolve_all([handle])
-        zone = next((z for z in zones if z.handle == handle), None)
+    def trust(self, trust_id: str) -> None:
+        """Pin a specific trust ID (hex-encoded 32-byte hash).
+        Bootstraps peers if needed, then fetches the anchor set for this ID."""
+        if self._pool.is_empty():
+            self._bootstrap_peers()
+        self._update_anchors(trust_id)
+
+    def trust_from_qr(self, payload: str) -> None:
+        """Pin trust from a QR code payload (hex-encoded trust ID)."""
+        self.trust(payload.strip())
+
+    def trusted(self) -> Optional[str]:
+        """Return the hex-encoded trusted trust ID, or None if not set."""
+        ts = self._trusted
+        return bytes(ts.id).hex() if ts else None
+
+    def observed(self) -> Optional[str]:
+        """Return the hex-encoded observed trust ID, or None if not set."""
+        ts = self._observed
+        return bytes(ts.id).hex() if ts else None
+
+    def clear_trusted(self) -> None:
+        """Clear the pinned trusted state."""
+        self._trusted = None
+
+    def badge(self, resolved: Resolved) -> str:
+        """Return the verification badge for a Resolved handle."""
+        return self.badge_for(resolved.zone.sovereignty, resolved.roots)
+
+    def badge_for(self, sovereignty: str, roots: list[str]) -> str:
+        """Return the verification badge given sovereignty and root IDs."""
+        is_trusted = self._are_roots_trusted(roots)
+        is_observed = is_trusted or self._are_roots_observed(roots)
+        if is_trusted and sovereignty == "sovereign":
+            return BADGE_ORANGE
+        if is_observed and not is_trusted:
+            return BADGE_UNVERIFIED
+        return BADGE_NONE
+
+    def resolve(self, handle: str) -> Resolved:
+        batch = self.resolve_all([handle])
+        zone = next((z for z in batch.zones if z.handle == handle), None)
         if zone is None:
             raise FabricError("decode", f"{handle} not found")
-        return zone
+        return Resolved(zone=zone, roots=batch.roots)
 
-    def resolve_all(self, handles: list[str]) -> list[lv.Zone]:
+    def resolve_all(self, handles: list[str]) -> ResolvedBatch:
         lookup = lv.Lookup(handles)
         all_zones: list[lv.Zone] = []
+        roots: list[str] = []
 
         prev_batch: list[str] = []
         batch = lookup.start()
@@ -118,8 +170,10 @@ class Fabric:
             prev_batch = batch
             batch = lookup.advance(zones)
             all_zones.extend(zones)
+            roots.append(bytes(verified.root_id()).hex())
 
-        return lookup.expand_zones(all_zones)
+        expanded = lookup.expand_zones(all_zones)
+        return ResolvedBatch(zones=expanded, roots=roots)
 
     def export(self, handle: str) -> bytes:
         """Export a certificate chain for a handle in .spacecert format."""
@@ -143,22 +197,20 @@ class Fabric:
         if self._pool.is_empty():
             self._bootstrap_peers()
         if self._veritas is None or self._veritas.newest_anchor() == 0:
-            self.update_anchors(self._anchor_set_hash or "")
+            self._update_anchors()
 
-    def update_anchors(self, hash_str: str = ""):
-        if hash_str:
-            anchor_set_hash = hash_str
-            peers = self._pool.shuffled_urls(4)
-        else:
-            anchor_set_hash, peers = self._fetch_latest_anchor_set_hash()
+    def publish(self, cert: bytes, signed_records: bytes) -> None:
+        """Publish signed records with a certificate chain to the network.
 
-        anchors = self._fetch_anchors(anchor_set_hash, peers)
-
-        v = lv.Veritas(anchors)
-
-        with self._lock:
-            self._veritas = v
-            self._anchor_set_hash = anchor_set_hash
+        cert: .spacecert bytes from export()
+        signed_records: borsh-encoded OffchainRecords from sign_records()
+        """
+        builder = lv.MessageBuilder()
+        builder.add_handle(cert, signed_records)
+        proof_req_json = builder.chain_proof_request()
+        proof_bytes = self.prove(proof_req_json.encode())
+        msg = builder.build(proof_bytes)
+        self.broadcast(msg.to_bytes())
 
     def prove(self, request: bytes) -> bytes:
         """Request a chain proof from a relay."""
@@ -217,6 +269,24 @@ class Fabric:
 
     # -- Internal --
 
+    def _are_roots_trusted(self, roots: list[str]) -> bool:
+        ts = self._trusted
+        if ts is None:
+            return False
+        return all(
+            any(bytes(r) == bytes.fromhex(root) for r in ts.roots)
+            for root in roots
+        )
+
+    def _are_roots_observed(self, roots: list[str]) -> bool:
+        ts = self._observed
+        if ts is None:
+            return False
+        return all(
+            any(bytes(r) == bytes.fromhex(root) for r in ts.roots)
+            for root in roots
+        )
+
     def _bootstrap_peers(self):
         urls: set[str] = set()
         for seed in self._seeds:
@@ -229,6 +299,27 @@ class Fabric:
         if not urls:
             raise FabricError("no_peers", "no peers available")
         self._pool.refresh(list(urls))
+
+    def _update_anchors(self, trust_id: Optional[str] = None):
+        is_trusted = trust_id is not None and trust_id != ""
+        if is_trusted:
+            anchor_hash = trust_id
+            peers = self._pool.shuffled_urls(4)
+        else:
+            anchor_hash, peers = self._fetch_latest_trust_id()
+
+        anchors = self._fetch_anchors(anchor_hash, peers)
+        trust_set = anchors.compute_trust_set()
+        if bytes(trust_set.id).hex() != anchor_hash:
+            raise FabricError("decode", "anchor root mismatch")
+
+        v = lv.Veritas(anchors)
+
+        with self._lock:
+            self._veritas = v
+            if is_trusted:
+                self._trusted = trust_set
+            self._observed = trust_set
 
     def _resolve_flat(self, handles: list[str]) -> lv.VerifiedMessage:
         by_space: dict[str, list[str]] = {}
@@ -353,7 +444,7 @@ class Fabric:
 
         return [r[0] for r in results]
 
-    def _fetch_latest_anchor_set_hash(self) -> tuple[str, list[str]]:
+    def _fetch_latest_trust_id(self) -> tuple[str, list[str]]:
         votes: dict[str, dict] = {}
 
         for seed in self._seeds:
@@ -390,7 +481,6 @@ class Fabric:
     def _fetch_anchors(
         self, hash_str: str, peers: list[str]
     ) -> lv.Anchors:
-        expected_root = bytes.fromhex(hash_str)
         last_err: Exception = FabricError("no_peers", "no peers available")
 
         for u in peers:
@@ -420,11 +510,6 @@ class Fabric:
                 anchors = lv.Anchors.from_json(json.dumps(entries))
             except Exception as e:
                 last_err = FabricError("decode", f"parsing anchors: {e}")
-                continue
-
-            computed = anchors.compute_anchor_set_hash()
-            if computed != expected_root:
-                last_err = FabricError("decode", "anchor root mismatch")
                 continue
 
             return anchors

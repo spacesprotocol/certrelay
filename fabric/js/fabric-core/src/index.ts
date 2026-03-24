@@ -1,5 +1,11 @@
 export { Fabric, FabricError } from "./fabric.js";
-export type { FabricOptions, PeerInfo } from "./fabric.js";
+export type {
+  FabricOptions,
+  PeerInfo,
+  VerificationBadge,
+  Resolved,
+  ResolvedBatch,
+} from "./fabric.js";
 export { RelayPool } from "./pool.js";
 export { compareHints } from "./hints.js";
 export type {
@@ -18,6 +24,7 @@ export type {
   QueryContextHandle,
   FabricZone,
   VerifiedMessageHandle,
+  MessageBuilderHandle,
   WasmLibveritas,
   ReactNativeLibveritas,
 } from "./provider.js";

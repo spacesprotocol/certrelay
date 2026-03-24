@@ -46,3 +46,20 @@ export function verifyMessage(
   const hash = hashSignable(msg);
   return schnorr.verify(signature, hash, pubkey);
 }
+
+/**
+ * Sign a record set and produce offchain records bytes.
+ *
+ * @param recordSetBytes - The serialized record set (e.g. `recordSet.toBytes()`)
+ * @param secretKey - 32-byte BIP-340 secret key
+ * @param createOffchainRecords - Function that combines record set + signature into offchain records wire format
+ * @returns The offchain records bytes
+ */
+export function signRecords(
+  recordSetBytes: Uint8Array,
+  secretKey: Uint8Array,
+  createOffchainRecords: (recordSet: Uint8Array, signature: Uint8Array) => Uint8Array,
+): Uint8Array {
+  const sig = signMessage(recordSetBytes, secretKey);
+  return createOffchainRecords(recordSetBytes, sig);
+}

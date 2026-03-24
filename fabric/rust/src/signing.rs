@@ -1,3 +1,5 @@
+use libveritas::cert::Signature;
+use libveritas::msg::OffchainRecords;
 use secp256k1::{Keypair, Message, Secp256k1, XOnlyPublicKey};
 use sha2::{Digest, Sha256};
 
@@ -21,6 +23,17 @@ pub fn sign_message(msg: &[u8], secret_key: &[u8; 32]) -> Result<[u8; 64], secp2
     let message = Message::from_digest(hash);
     let sig = secp.sign_schnorr_no_aux_rand(&message, &keypair);
     Ok(sig.serialize())
+}
+
+/// Sign a record set and return OffchainRecords ready for publishing.
+///
+/// Combines `sign_message` + `OffchainRecords::new` in a single call.
+pub fn sign_records(
+    record_set: &sip7::RecordSet,
+    secret_key: &[u8; 32],
+) -> Result<OffchainRecords, secp256k1::Error> {
+    let sig = sign_message(record_set.as_slice(), secret_key)?;
+    Ok(OffchainRecords::new(record_set.clone(), Signature(sig)))
 }
 
 /// Verify a BIP-340 Schnorr signature over a message with the Spaces signed-message prefix.

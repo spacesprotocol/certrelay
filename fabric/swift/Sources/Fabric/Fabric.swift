@@ -44,6 +44,29 @@ public enum FabricError: Error, LocalizedError {
     }
 }
 
+// MARK: - Verification badge
+
+/// Verification badge for a resolved handle.
+public enum VerificationBadge {
+    case orange
+    case unverified
+    case none
+}
+
+// MARK: - Resolved types
+
+/// A resolved handle with its zone and verification roots.
+public struct Resolved {
+    public let zone: Zone
+    public let roots: [String]  // hex-encoded root IDs
+}
+
+/// A batch of resolved handles with shared verification roots.
+public struct ResolvedBatch {
+    public let zones: [Zone]
+    public let roots: [String]  // hex-encoded root IDs
+}
+
 // MARK: - Fabric client
 
 public final class Fabric: @unchecked Sendable {
@@ -52,16 +75,11 @@ public final class Fabric: @unchecked Sendable {
     private var _veritas: Veritas?
     private var zoneCache: [String: Zone] = [:]
     private let seeds: [String]
-    private var _anchorSetHash: String?
+    private var trusted: TrustSet?
+    private var observed: TrustSet?
     public var preferLatest: Bool
     private let devMode: Bool
     private let lock = NSLock()
-
-    public var anchorSetHash: String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _anchorSetHash
-    }
 
     public var relays: [String] { pool.urls }
 
@@ -73,14 +91,26 @@ public final class Fabric: @unchecked Sendable {
         return _veritas
     }
 
+    /// The pinned trusted trust ID, or nil.
+    public var trustedID: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return trusted.map { Data($0.id).hexString }
+    }
+
+    /// The latest observed trust ID, or nil.
+    public var observedID: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return observed.map { Data($0.id).hexString }
+    }
+
     public init(
         seeds: [String] = defaultSeeds,
-        anchorSetHash: String? = nil,
         preferLatest: Bool = true,
         devMode: Bool = false
     ) {
         self.seeds = seeds
-        self._anchorSetHash = anchorSetHash
         self.preferLatest = preferLatest
         self.devMode = devMode
         self.session = URLSession(configuration: .default)
@@ -93,7 +123,7 @@ public final class Fabric: @unchecked Sendable {
             try await bootstrapPeers()
         }
         if _veritas == nil || _veritas!.newestAnchor() == 0 {
-            try await updateAnchors(hash: _anchorSetHash)
+            try await updateAnchors()
         }
     }
 
@@ -112,46 +142,90 @@ public final class Fabric: @unchecked Sendable {
         pool.refresh(urls)
     }
 
-    public func updateAnchors(hash: String? = nil) async throws {
-        let anchorSetHash: String
+    // MARK: - Trust
+
+    /// Pin a specific trust ID.
+    public func trust(_ trustID: String) async throws {
+        if pool.isEmpty { try await bootstrapPeers() }
+        try await updateAnchors(trustID: trustID)
+    }
+
+    /// Pin trust from a QR code payload.
+    public func trustFromQr(_ payload: String) async throws {
+        try await trust(payload.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// Clear the trusted state.
+    public func clearTrusted() {
+        lock.lock(); trusted = nil; lock.unlock()
+    }
+
+    /// Badge for a Resolved handle.
+    public func badge(_ resolved: Resolved) -> VerificationBadge {
+        badgeFor(sovereignty: resolved.zone.sovereignty, roots: resolved.roots)
+    }
+
+    /// Badge given sovereignty and roots.
+    public func badgeFor(sovereignty: String, roots: [String]) -> VerificationBadge {
+        let isTrusted = areRootsTrusted(roots)
+        let isObserved = isTrusted || areRootsObserved(roots)
+        if isTrusted && sovereignty == "sovereign" { return .orange }
+        if isObserved && !isTrusted { return .unverified }
+        return .none
+    }
+
+    // MARK: - Anchors
+
+    public func updateAnchors(trustID: String? = nil) async throws {
+        let isTrusted = trustID != nil
+        let hash: String
         var peers: [String]
 
-        if let hash {
-            anchorSetHash = hash
+        if let trustID {
+            hash = trustID
             peers = pool.shuffledUrls(4)
         } else {
-            let result = try await fetchLatestAnchorSetHash()
-            anchorSetHash = result.hash
+            let result = try await fetchLatestTrustID()
+            hash = result.hash
             peers = result.peers
         }
 
-        let anchors = try await fetchAnchors(hash: anchorSetHash, peers: peers)
+        let anchors = try await fetchAnchors(hash: hash, peers: peers)
+        let ts = anchors.computeTrustSet()
+        if Data(ts.id).hexString != hash {
+            throw FabricError.decode("anchor root mismatch")
+        }
+
         let v = try Veritas(anchors: anchors)
 
         lock.lock()
         _veritas = v
-        _anchorSetHash = anchorSetHash
+        if isTrusted {
+            trusted = ts
+        }
+        observed = ts
         lock.unlock()
     }
 
     // MARK: - Resolution
 
     /// Resolve a single handle. Supports dotted names like `hello.alice@bitcoin`.
-    public func resolve(_ handle: String) async throws -> Zone {
-        let zones = try await resolveAll([handle])
-        guard let zone = zones.first(where: { $0.handle == handle }) else {
+    public func resolve(_ handle: String) async throws -> Resolved {
+        let batch = try await resolveAll([handle])
+        guard let zone = batch.zones.first(where: { $0.handle == handle }) else {
             throw FabricError.decode("\(handle) not found")
         }
-        return zone
+        return Resolved(zone: zone, roots: batch.roots)
     }
 
     /// Resolve multiple handles, including dotted names like `hello.alice@bitcoin`.
     ///
     /// Returns expanded zones for all requested handles.
     /// Uses the Lookup type from libveritas for dotted-name resolution.
-    public func resolveAll(_ handles: [String]) async throws -> [Zone] {
+    public func resolveAll(_ handles: [String]) async throws -> ResolvedBatch {
         let lookup = try Lookup(names: handles)
         var allZones = [Zone]()
+        var roots = [String]()
 
         var prevBatch = [String]()
         var batch = lookup.start()
@@ -162,9 +236,11 @@ public final class Fabric: @unchecked Sendable {
             prevBatch = batch
             batch = try lookup.advance(zones: zones)
             allZones.append(contentsOf: zones)
+            roots.append(Data(verified.rootId()).hexString)
         }
 
-        return try lookup.expandZones(zones: allZones)
+        let expanded = try lookup.expandZones(zones: allZones)
+        return ResolvedBatch(zones: expanded, roots: roots)
     }
 
     /// Export a certificate chain for a handle in `.spacecert` format.
@@ -184,6 +260,18 @@ public final class Fabric: @unchecked Sendable {
         }
 
         return try createCertificateChain(subject: handle, certBytesList: allCertBytes)
+    }
+
+    // MARK: - Publish
+
+    /// Build a message from a certificate chain and signed records, then broadcast.
+    public func publish(cert: Data, records: Data) async throws {
+        let builder = MessageBuilder()
+        try builder.addHandle(chainBytes: cert, recordsBytes: records)
+        let proofReqJSON = try builder.chainProofRequest()
+        let proofBytes = try await prove(Data(proofReqJSON.utf8))
+        let msg = try builder.build(chainProof: proofBytes)
+        try await broadcast(msg.toBytes())
     }
 
     /// Resolve a flat list of non-dotted handles in a single relay query.
@@ -406,6 +494,26 @@ public final class Fabric: @unchecked Sendable {
         if pool.isEmpty { throw FabricError.noPeers }
     }
 
+    // MARK: - Trust helpers (private)
+
+    private func areRootsTrusted(_ roots: [String]) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let ts = trusted else { return false }
+        return roots.allSatisfy { root in
+            guard let rootBytes = Data(hexString: root) else { return false }
+            return ts.roots.contains { Data($0) == rootBytes }
+        }
+    }
+
+    private func areRootsObserved(_ roots: [String]) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let ts = observed else { return false }
+        return roots.allSatisfy { root in
+            guard let rootBytes = Data(hexString: root) else { return false }
+            return ts.roots.contains { Data($0) == rootBytes }
+        }
+    }
+
     // MARK: - Internal fetch helpers
 
     private func fetchPeers(from relayUrl: String) async throws -> [PeerInfo] {
@@ -430,7 +538,7 @@ public final class Fabric: @unchecked Sendable {
         return try JSONDecoder().decode(HintsResponse.self, from: data)
     }
 
-    private func fetchLatestAnchorSetHash() async throws -> (hash: String, peers: [String]) {
+    private func fetchLatestTrustID() async throws -> (hash: String, peers: [String]) {
         var votes = [String: (height: Int, peers: [String])]()
 
         for url in seeds {
@@ -489,7 +597,8 @@ public final class Fabric: @unchecked Sendable {
                 let entriesData = try JSONSerialization.data(withJSONObject: entries)
                 let entriesStr = String(data: entriesData, encoding: .utf8)!
                 let anchors = try Anchors.fromJson(json: entriesStr)
-                if anchors.computeAnchorSetHash() != expectedRoot {
+                let ts = anchors.computeTrustSet()
+                if Data(ts.id) != expectedRoot {
                     lastError = .decode("anchor root mismatch")
                     continue
                 }
@@ -529,6 +638,26 @@ public final class Fabric: @unchecked Sendable {
         req.httpBody = body
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         return req
+    }
+}
+
+// MARK: - Data hex extensions
+
+extension Data {
+    /// Hex-encode this data to a lowercase string.
+    var hexString: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Initialize from a hex-encoded string. Returns nil on invalid input.
+    init?(hexString hex: String) {
+        var data = Data(capacity: hex.count / 2)
+        var chars = hex.makeIterator()
+        while let hi = chars.next(), let lo = chars.next() {
+            guard let byte = UInt8(String([hi, lo]), radix: 16) else { return nil }
+            data.append(byte)
+        }
+        self = data
     }
 }
 

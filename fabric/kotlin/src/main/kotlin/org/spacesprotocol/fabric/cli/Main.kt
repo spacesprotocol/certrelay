@@ -8,7 +8,7 @@ import kotlin.system.exitProcess
 fun main(args: Array<String>) {
     val handles = mutableListOf<String>()
     var seeds: List<String>? = null
-    var anchorSetHash: String? = null
+    var trustId: String? = null
     var devMode = false
 
     var i = 0
@@ -19,10 +19,10 @@ fun main(args: Array<String>) {
                 if (i >= args.size) exitUsage("--seeds requires a value")
                 seeds = args[i].split(",")
             }
-            "--anchor-set-hash" -> {
+            "--trust" -> {
                 i++
-                if (i >= args.size) exitUsage("--anchor-set-hash requires a value")
-                anchorSetHash = args[i]
+                if (i >= args.size) exitUsage("--trust requires a value")
+                trustId = args[i]
             }
             "--dev-mode" -> devMode = true
             "--help", "-h" -> {
@@ -42,10 +42,18 @@ fun main(args: Array<String>) {
     val fabric = Fabric(
         seeds = seeds ?: DEFAULT_SEEDS,
         devMode = devMode,
-        anchorSetHash = anchorSetHash,
     )
 
-    val zones = try {
+    if (trustId != null) {
+        try {
+            fabric.trust(trustId)
+        } catch (e: Exception) {
+            System.err.println("error: $e")
+            exitProcess(1)
+        }
+    }
+
+    val batch = try {
         fabric.resolveAll(handles)
     } catch (e: Exception) {
         System.err.println("error: $e")
@@ -53,7 +61,7 @@ fun main(args: Array<String>) {
     }
 
     for (handle in handles) {
-        val zone = zones.find { it.handle == handle }
+        val zone = batch.zones.find { it.handle == handle }
         if (zone == null) {
             System.err.println("$handle: not found")
             continue
@@ -73,7 +81,7 @@ Resolve handles via the certrelay network.
 
 Options:
   --seeds <url,url,...>      Seed relay URLs (comma-separated)
-  --anchor-set-hash <hex>    Anchor set hash for verification
+  --trust <hex>              Trust set ID for verification
   --dev-mode                 Enable dev mode (skip finality checks)
   -h, --help                 Show this help""")
 }

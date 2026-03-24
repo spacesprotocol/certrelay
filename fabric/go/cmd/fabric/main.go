@@ -13,7 +13,7 @@ func main() {
 	args := os.Args[1:]
 	var handles []string
 	var seeds []string
-	var anchorSetHash string
+	var trustID string
 	devMode := false
 
 	for i := 0; i < len(args); i++ {
@@ -24,12 +24,12 @@ func main() {
 				exitUsage("--seeds requires a value")
 			}
 			seeds = strings.Split(args[i], ",")
-		case "--anchor-set-hash":
+		case "--trust-id":
 			i++
 			if i >= len(args) {
-				exitUsage("--anchor-set-hash requires a value")
+				exitUsage("--trust-id requires a value")
 			}
-			anchorSetHash = args[i]
+			trustID = args[i]
 		case "--dev-mode":
 			devMode = true
 		case "--help", "-h":
@@ -55,18 +55,21 @@ func main() {
 	if devMode {
 		f.SetDevMode(true)
 	}
-	if anchorSetHash != "" {
-		f.SetAnchorSetHash(anchorSetHash)
+	if trustID != "" {
+		if err := f.Trust(trustID); err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to pin trust id: %s\n", err)
+			os.Exit(1)
+		}
 	}
 
-	zones, err := f.ResolveAll(handles)
+	batch, err := f.ResolveAll(handles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 
 	zoneMap := make(map[string]libveritas.Zone)
-	for _, z := range zones {
+	for _, z := range batch.Zones {
 		if _, exists := zoneMap[z.Handle]; !exists {
 			zoneMap[z.Handle] = z
 		}
@@ -94,7 +97,7 @@ Resolve handles via the certrelay network.
 
 Options:
   --seeds <url,url,...>      Seed relay URLs (comma-separated)
-  --anchor-set-hash <hex>    Anchor set hash for verification
+  --trust-id <hex>           Trust ID for verification
   --dev-mode                 Enable dev mode (skip finality checks)
   -h, --help                 Show this help`)
 }

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 
+import libveritas as lv
+
 try:
     from coincurve import PrivateKey
     from coincurve.keys import PublicKeyXOnly
@@ -39,6 +41,16 @@ def sign_message(msg: bytes, secret_key: bytes) -> bytes:
     digest = _hash_signable(msg)
     pk = PrivateKey(secret_key)
     return pk.sign_schnorr(digest)
+
+
+def sign_records(record_set, secret_key: bytes) -> bytes:
+    """Sign a RecordSet and return borsh-encoded OffchainRecords.
+
+    Takes a ``libveritas.RecordSet`` and a 32-byte secret key.
+    Returns bytes suitable for passing to ``Fabric.publish()``.
+    """
+    sig = sign_message(record_set.to_bytes(), secret_key)
+    return lv.create_offchain_records(record_set, sig)
 
 
 def verify_message(msg: bytes, signature: bytes, pubkey: bytes) -> bool:

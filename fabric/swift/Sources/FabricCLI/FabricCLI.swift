@@ -7,7 +7,7 @@ struct FabricCLI {
         var args = Array(CommandLine.arguments.dropFirst())
         var handles = [String]()
         var seeds: [String]?
-        var anchorSetHash: String?
+        var trustId: String?
         var devMode = false
 
         while !args.isEmpty {
@@ -16,9 +16,9 @@ struct FabricCLI {
             case "--seeds":
                 guard !args.isEmpty else { exit(usage: "--seeds requires a value") }
                 seeds = args.removeFirst().split(separator: ",").map(String.init)
-            case "--anchor-set-hash":
-                guard !args.isEmpty else { exit(usage: "--anchor-set-hash requires a value") }
-                anchorSetHash = args.removeFirst()
+            case "--trust-id":
+                guard !args.isEmpty else { exit(usage: "--trust-id requires a value") }
+                trustId = args.removeFirst()
             case "--dev-mode":
                 devMode = true
             case "--help", "-h":
@@ -38,14 +38,17 @@ struct FabricCLI {
 
         let fabric = Fabric(
             seeds: seeds ?? defaultSeeds,
-            anchorSetHash: anchorSetHash,
             devMode: devMode
         )
 
-        let zones = try await fabric.resolveAll(handles)
+        if let trustId {
+            try await fabric.trust(trustId)
+        }
+
+        let batch = try await fabric.resolveAll(handles)
 
         for handle in handles {
-            guard let zone = zones.first(where: { $0.handle == handle }) else {
+            guard let zone = batch.zones.first(where: { $0.handle == handle }) else {
                 fputs("\(handle): not found\n", stderr)
                 continue
             }
@@ -61,7 +64,7 @@ struct FabricCLI {
 
         Options:
           --seeds <url,url,...>      Seed relay URLs (comma-separated)
-          --anchor-set-hash <hex>    Anchor set hash for verification
+          --trust-id <hex>           Trust ID for verification
           --dev-mode                 Enable dev mode (skip finality checks)
           -h, --help                 Show this help
         """)

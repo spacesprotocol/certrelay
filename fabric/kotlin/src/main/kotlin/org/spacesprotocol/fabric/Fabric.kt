@@ -38,34 +38,64 @@ data class PeerInfo(
     val capabilities: Int = 0,
 )
 
+enum class VerificationBadge { Orange, Unverified, None }
+
+data class Resolved(val zone: Zone, val roots: List<String>)
+data class ResolvedBatch(val zones: List<Zone>, val roots: List<String>)
+
 private val json = Json { ignoreUnknownKeys = true }
 
 class Fabric(
     private val seeds: List<String> = DEFAULT_SEEDS,
     var devMode: Boolean = false,
     var preferLatest: Boolean = true,
-    anchorSetHash: String? = null,
 ) {
     private val pool = RelayPool()
     private var veritas: Veritas? = null
     private val zoneCache = mutableMapOf<String, Zone>()
     private val lock = Any()
 
-    var anchorSetHash: String? = anchorSetHash
-        get() = synchronized(lock) { field }
-        private set
+    @Volatile private var trusted: TrustSet? = null
+    @Volatile private var observed: TrustSet? = null
 
     val relays: List<String> get() = pool.urls()
 
     /** The internal Veritas instance for offline verification. Null until bootstrap() is called. */
     fun getVeritas(): org.spacesprotocol.libveritas.Veritas? = synchronized(lock) { veritas }
 
+    // -- Trust --
+
+    fun trust(trustId: String) {
+        if (pool.isEmpty) bootstrapPeers()
+        updateAnchors(trustId)
+    }
+
+    fun trustFromQr(payload: String) = trust(payload.trim())
+
+    fun trusted(): String? = trusted?.id?.toHexString()
+    fun observed(): String? = observed?.id?.toHexString()
+
+    fun clearTrusted() { trusted = null }
+
+    fun badge(resolved: Resolved): VerificationBadge =
+        badgeFor(resolved.zone.sovereignty, resolved.roots)
+
+    fun badgeFor(sovereignty: String, roots: List<String>): VerificationBadge {
+        val isTrusted = areRootsTrusted(roots)
+        val isObserved = isTrusted || areRootsObserved(roots)
+        return when {
+            isTrusted && sovereignty == "sovereign" -> VerificationBadge.Orange
+            isObserved && !isTrusted -> VerificationBadge.Unverified
+            else -> VerificationBadge.None
+        }
+    }
+
     // -- Bootstrap --
 
     fun bootstrap() {
         if (pool.isEmpty) bootstrapPeers()
         if (veritas == null || veritas!!.newestAnchor() == 0u) {
-            updateAnchors(anchorSetHash ?: "")
+            updateAnchors("")
         }
     }
 
@@ -81,50 +111,60 @@ class Fabric(
         pool.refresh(urls.toList())
     }
 
-    fun updateAnchors(hash: String = "") {
-        val anchorSetHash: String
+    fun updateAnchors(trustId: String = "") {
+        val isTrusted = trustId.isNotEmpty()
+        val hash: String
         val peers: List<String>
 
-        if (hash.isNotEmpty()) {
-            anchorSetHash = hash
+        if (isTrusted) {
+            hash = trustId
             peers = pool.shuffledUrls(4)
         } else {
-            val result = fetchLatestAnchorSetHash()
-            anchorSetHash = result.first
+            val result = fetchLatestTrustId()
+            hash = result.first
             peers = result.second
         }
 
-        val anchors = fetchAnchors(anchorSetHash, peers)
+        val anchors = fetchAnchors(hash, peers)
         val v = Veritas(anchors)
 
         synchronized(lock) {
             veritas = v
-            this.anchorSetHash = anchorSetHash
+            val ts = anchors.computeTrustSet()
+            if (isTrusted) {
+                trusted = ts
+            }
+            observed = ts
         }
     }
 
     // -- Resolution --
 
-    fun resolve(handle: String): Zone {
-        val zones = resolveAll(listOf(handle))
-        return zones.find { it.handle == handle } ?: throw FabricError("decode", "$handle not found")
+    fun resolve(handle: String): Resolved {
+        val batch = resolveAll(listOf(handle))
+        val zone = batch.zones.find { it.handle == handle }
+            ?: throw FabricError("decode", "$handle not found")
+        return Resolved(zone, batch.roots)
     }
 
-    fun resolveAll(handles: List<String>): List<Zone> {
+    fun resolveAll(handles: List<String>): ResolvedBatch {
         val lookup = Lookup(handles)
         val allZones = mutableListOf<Zone>()
+        val roots = mutableListOf<String>()
 
         var prevBatch = emptyList<String>()
         var batch = lookup.start()
         while (batch.isNotEmpty()) {
             if (batch == prevBatch) break
-            val zones = resolveFlat(batch).zones()
+            val verified = resolveFlat(batch)
+            val zones = verified.zones()
             prevBatch = batch
             batch = lookup.advance(zones)
             allZones.addAll(zones)
+            roots.add(verified.rootId().toHexString())
         }
 
-        return lookup.expandZones(allZones)
+        return ResolvedBatch(lookup.expandZones(allZones), roots)
     }
 
     fun export(handle: String): ByteArray {
@@ -278,7 +318,7 @@ class Fabric(
         return results.map { it.url }
     }
 
-    // -- Prove & Broadcast --
+    // -- Prove & Broadcast & Publish --
 
     /** Requests a chain proof from a relay. */
     fun prove(request: ByteArray): ByteArray {
@@ -320,6 +360,20 @@ class Fabric(
         if (!anyOk) throw (lastErr ?: FabricError("no_peers", "no peers available"))
     }
 
+    /**
+     * Publish builds a message from a certificate chain and signed records, then broadcasts.
+     * cert: .spacecert bytes from export()
+     * signedRecords: borsh-encoded OffchainRecords from signRecords()
+     */
+    fun publish(cert: ByteArray, signedRecords: ByteArray) {
+        val builder = MessageBuilder()
+        builder.addHandle(cert, signedRecords)
+        val proofReqJson = builder.chainProofRequest()
+        val proofBytes = prove(proofReqJson.toByteArray())
+        val msg = builder.build(proofBytes)
+        broadcast(msg.toBytes())
+    }
+
     // -- Peers --
 
     fun peers(): List<PeerInfo> {
@@ -342,7 +396,7 @@ class Fabric(
 
     // -- Internal fetch helpers --
 
-    private fun fetchLatestAnchorSetHash(): Pair<String, List<String>> {
+    private fun fetchLatestTrustId(): Pair<String, List<String>> {
         data class Vote(val height: Int, val peers: MutableList<String>)
         val votes = mutableMapOf<String, Vote>()
 
@@ -382,7 +436,6 @@ class Fabric(
     }
 
     private fun fetchAnchors(hash: String, peers: List<String>): Anchors {
-        val expectedRoot = hexDecode(hash)
         var lastErr: Exception = FabricError("no_peers", "no peers available")
 
         for (url in peers) {
@@ -409,9 +462,9 @@ class Fabric(
                 }
 
                 val anchors = Anchors.fromJson(entriesJson)
-                val computed = anchors.computeAnchorSetHash()
+                val ts = anchors.computeTrustSet()
 
-                if (!computed.contentEquals(expectedRoot)) {
+                if (ts.id.toHexString() != hash) {
                     lastErr = FabricError("decode", "anchor root mismatch")
                     continue
                 }
@@ -425,6 +478,24 @@ class Fabric(
         }
 
         throw lastErr
+    }
+
+    // -- Private trust helpers --
+
+    private fun areRootsTrusted(roots: List<String>): Boolean {
+        val ts = trusted ?: return false
+        return roots.all { root ->
+            val rootBytes = root.hexToByteArray()
+            ts.roots.any { it.contentEquals(rootBytes) }
+        }
+    }
+
+    private fun areRootsObserved(roots: List<String>): Boolean {
+        val ts = observed ?: return false
+        return roots.all { root ->
+            val rootBytes = root.hexToByteArray()
+            ts.roots.any { it.contentEquals(rootBytes) }
+        }
     }
 }
 
@@ -535,4 +606,11 @@ private fun hexDecode(hex: String): ByteArray {
     return ByteArray(hex.length / 2) { i ->
         hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
     }
+}
+
+private fun ByteArray.toHexString() = joinToString("") { "%02x".format(it) }
+
+private fun String.hexToByteArray(): ByteArray {
+    check(length % 2 == 0)
+    return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

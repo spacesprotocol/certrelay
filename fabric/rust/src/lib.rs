@@ -20,8 +20,6 @@ use serde::{Deserialize, Serialize};
 pub extern crate libveritas;
 // Also re-export Message directly since it's used in the wire format
 pub use libveritas::msg::Message;
-use sha2::{Digest, Sha256};
-
 use spaces_nums::RootAnchor;
 
 /// Capability flags for peers.
@@ -67,25 +65,7 @@ pub struct HintsResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchorResponse {
-    #[serde(with = "hex_bytes32")]
-    pub root: [u8;32],
     pub entries: Vec<RootAnchor>,
-}
-
-mod hex_bytes32 {
-    use serde::{self, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
-    where D: Deserializer<'de> {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        bytes.try_into().map_err(|_| serde::de::Error::custom("expected 32 bytes"))
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -263,26 +243,9 @@ impl PeerInfo {
 impl AnchorResponse {
     pub fn from_anchors(anchors: Vec<RootAnchor>) -> Self {
         Self {
-            root: compute_anchor_set_hash(&anchors),
             entries: anchors,
         }
     }
-
-    pub fn root_matches(&self) -> bool {
-        self.root == compute_anchor_set_hash(&self.entries)
-    }
-}
-
-fn compute_anchor_set_hash(anchors: &Vec<RootAnchor>) -> [u8;32] {
-    let mut hasher = Sha256::new();
-    for root in anchors {
-        hasher.update(root.block.hash);
-        hasher.update(root.block.height.to_le_bytes());
-        hasher.update(root.spaces_root);
-        hasher.update(root.nums_root.unwrap_or([0u8; 32]));
-    }
-
-    hasher.finalize().into()
 }
 
 #[cfg(test)]
