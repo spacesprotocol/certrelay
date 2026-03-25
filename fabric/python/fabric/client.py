@@ -85,6 +85,51 @@ class _TrustKind:
     OBSERVED = "observed"
 
 
+class _AnchorPool:
+    def __init__(self):
+        self.trusted: list = []      # raw entries list (from JSON)
+        self.semi_trusted: list = [] # raw entries list (from JSON)
+        self.observed: list = []     # raw entries list (from JSON)
+
+    def merged(self) -> list:
+        """Combine all entries, dedup by block height."""
+        all_entries = []
+        all_entries.extend(self.trusted)
+        all_entries.extend(self.semi_trusted)
+        all_entries.extend(self.observed)
+        seen = set()
+        deduped = []
+        for e in all_entries:
+            h = e.get("block", {}).get("height", 0) if isinstance(e, dict) else 0
+            if h not in seen:
+                seen.add(h)
+                deduped.append(e)
+        return deduped
+
+
+@dataclass
+class ScanParams:
+    """Parsed parameters from a veritas://scan?... URI."""
+    id: str  # hex-encoded trust ID
+
+    @staticmethod
+    def parse(uri: str) -> "ScanParams":
+        uri = uri.strip()
+        prefix = "veritas://scan?"
+        if not uri.startswith(prefix):
+            raise FabricError("decode", "expected veritas://scan?... URI")
+        query = uri[len(prefix):]
+        params = {}
+        for pair in query.split("&"):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                params[k] = v
+        trust_id = params.get("id")
+        if not trust_id:
+            raise FabricError("decode", "missing id parameter")
+        return ScanParams(id=trust_id)
+
+
 class Fabric:
     def __init__(
         self,
@@ -101,6 +146,7 @@ class Fabric:
         self._trusted: Optional[lv.TrustSet] = None
         self._observed: Optional[lv.TrustSet] = None
         self._semi_trusted: Optional[lv.TrustSet] = None
+        self._anchor_pool = _AnchorPool()
         self._zone_cache: dict[str, lv.Zone] = {}
         self._lock = threading.Lock()
 
@@ -124,8 +170,14 @@ class Fabric:
         self._update_anchors(trust_id, _TrustKind.TRUSTED)
 
     def trust_from_qr(self, payload: str) -> None:
-        """Pin trust from a QR code payload (hex-encoded trust ID)."""
-        self.trust(payload.strip())
+        """Parse a veritas://scan?id=... QR payload and pin as trusted."""
+        params = ScanParams.parse(payload)
+        self.trust(params.id)
+
+    def semi_trust_from_qr(self, payload: str) -> None:
+        """Parse a veritas://scan?id=... QR payload and pin as semi-trusted."""
+        params = ScanParams.parse(payload)
+        self.semi_trust(params.id)
 
     def trusted(self) -> Optional[str]:
         """Return the hex-encoded trusted trust ID, or None if not set."""
@@ -338,20 +390,31 @@ class Fabric:
         else:
             anchor_hash, peers = self._fetch_latest_trust_id()
 
-        anchors = self._fetch_anchors(anchor_hash, peers)
+        anchors, entries = self._fetch_anchors(anchor_hash, peers)
         trust_set = anchors.compute_trust_set()
         if bytes(trust_set.id).hex() != anchor_hash:
             raise FabricError("decode", "anchor root mismatch")
 
-        v = lv.Veritas(anchors)
-
         with self._lock:
-            self._veritas = v
+            if kind == _TrustKind.TRUSTED:
+                self._anchor_pool.trusted = entries
+            elif kind == _TrustKind.SEMI_TRUSTED:
+                self._anchor_pool.semi_trusted = entries
+            else:
+                self._anchor_pool.observed = entries
+
+            # Rebuild veritas from merged anchors
+            merged = self._anchor_pool.merged()
+            if merged:
+                merged_anchors = lv.Anchors.from_json(json.dumps(merged))
+                self._veritas = lv.Veritas(merged_anchors)
+
             if kind == _TrustKind.TRUSTED:
                 self._trusted = trust_set
             elif kind == _TrustKind.SEMI_TRUSTED:
                 self._semi_trusted = trust_set
-            self._observed = trust_set
+            else:
+                self._observed = trust_set
 
     def _resolve_flat(self, handles: list[str]) -> lv.VerifiedMessage:
         by_space: dict[str, list[str]] = {}
@@ -512,7 +575,7 @@ class Fabric:
 
     def _fetch_anchors(
         self, hash_str: str, peers: list[str]
-    ) -> lv.Anchors:
+    ) -> tuple[lv.Anchors, list]:
         last_err: Exception = FabricError("no_peers", "no peers available")
 
         for u in peers:
@@ -544,7 +607,7 @@ class Fabric:
                 last_err = FabricError("decode", f"parsing anchors: {e}")
                 continue
 
-            return anchors
+            return anchors, entries
 
         raise last_err
 

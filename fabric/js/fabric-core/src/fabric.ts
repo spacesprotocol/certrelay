@@ -98,6 +98,11 @@ export class Fabric {
   private _trusted: { id: Uint8Array; roots: Uint8Array[] } | null = null;
   private _semiTrusted: { id: Uint8Array; roots: Uint8Array[] } | null = null;
   private _observed: { id: Uint8Array; roots: Uint8Array[] } | null = null;
+  private anchorEntries: {
+    trusted: any[] | null;
+    semiTrusted: any[] | null;
+    observed: any[] | null;
+  } = { trusted: null, semiTrusted: null, observed: null };
   preferLatest: boolean;
 
   constructor(options: FabricOptions) {
@@ -105,6 +110,24 @@ export class Fabric {
     this.seeds = options.seeds ?? [...DEFAULT_SEEDS];
     this.devMode = options.devMode ?? false;
     this.preferLatest = options.preferLatest ?? true;
+  }
+
+  private rebuildVeritas(): void {
+    const allEntries: any[] = [];
+    for (const entries of [this.anchorEntries.trusted, this.anchorEntries.semiTrusted, this.anchorEntries.observed]) {
+      if (entries) allEntries.push(...entries);
+    }
+    if (allEntries.length === 0) return;
+    // Deduplicate by block height (keep first seen = highest priority from trusted > semi > observed)
+    const seen = new Set<number>();
+    const deduped = allEntries.filter(e => {
+      const h = e.block?.height ?? e.height;
+      if (seen.has(h)) return false;
+      seen.add(h);
+      return true;
+    });
+    const anchors = this.provider.createAnchors(deduped);
+    this.veritas = this.provider.createVeritas(anchors);
   }
 
   get relays(): string[] {
@@ -126,9 +149,16 @@ export class Fabric {
     await this.updateAnchors(trustId, "trusted");
   }
 
-  /** Trust from a QR code payload (the payload is the trust ID hex string). */
+  /** Parse a veritas://scan?id=... QR payload and pin as trusted. */
   async trustFromQr(payload: string): Promise<void> {
-    await this.trust(payload.trim());
+    const params = parseScanUri(payload);
+    await this.trust(params.id);
+  }
+
+  /** Parse a veritas://scan?id=... QR payload and pin as semi-trusted. */
+  async semiTrustFromQr(payload: string): Promise<void> {
+    const params = parseScanUri(payload);
+    await this.semiTrust(params.id);
   }
 
   /** Returns the hex-encoded trust ID if anchors have been explicitly trusted, or null. */
@@ -268,14 +298,29 @@ export class Fabric {
       peers = result.peers;
     }
 
-    const anchors = await this.fetchAnchors(hash, peers);
+    const result = await this.fetchAnchors(hash, peers);
+    const anchors = result.handle;
     const trustSet = anchors.computeTrustSet();
 
     if (toHex(trustSet.id) !== hash) {
       throw new FabricError("anchor root mismatch", "decode");
     }
 
-    this.veritas = this.provider.createVeritas(anchors);
+    // Store entries per source and rebuild merged veritas
+    switch (kind) {
+      case "trusted":
+        this.anchorEntries.trusted = result.entries;
+        break;
+      case "semi_trusted":
+        this.anchorEntries.semiTrusted = result.entries;
+        break;
+      case "observed":
+        this.anchorEntries.observed = result.entries;
+        break;
+    }
+    this.rebuildVeritas();
+
+    // Set trust field for this kind only
     switch (kind) {
       case "trusted":
         this._trusted = trustSet;
@@ -283,8 +328,10 @@ export class Fabric {
       case "semi_trusted":
         this._semiTrusted = trustSet;
         break;
+      case "observed":
+        this._observed = trustSet;
+        break;
     }
-    this._observed = trustSet;
   }
 
   // ── Resolution ──
@@ -677,7 +724,7 @@ export class Fabric {
   private async fetchAnchors(
     hash: string,
     peers: string[],
-  ): Promise<AnchorsHandle> {
+  ): Promise<{ handle: AnchorsHandle; entries: any[] }> {
     let lastErr: Error = new FabricError("no peers available", "no_peers");
 
     for (const url of peers) {
@@ -694,7 +741,7 @@ export class Fabric {
         }
 
         const json = await resp.json();
-        return this.provider.createAnchors(json.entries);
+        return { handle: this.provider.createAnchors(json.entries), entries: json.entries };
       } catch (e) {
         lastErr =
           e instanceof FabricError
@@ -705,6 +752,27 @@ export class Fabric {
 
     throw lastErr;
   }
+}
+
+// ── Scan URI ──
+
+export interface ScanParams {
+  id: string;  // hex-encoded trust ID
+}
+
+export function parseScanUri(uri: string): ScanParams {
+  uri = uri.trim();
+  const prefix = "veritas://scan?";
+  if (!uri.startsWith(prefix)) {
+    throw new FabricError("expected veritas://scan?... URI", "decode");
+  }
+  const query = uri.slice(prefix.length);
+  const params = new URLSearchParams(query);
+  const id = params.get("id");
+  if (!id) {
+    throw new FabricError("missing id parameter", "decode");
+  }
+  return { id };
 }
 
 // ── Utilities ──

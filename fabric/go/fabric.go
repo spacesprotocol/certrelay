@@ -49,6 +49,32 @@ func (e *FabricError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
+// ScanParams holds parsed parameters from a veritas://scan?... URI.
+type ScanParams struct {
+	ID string // hex-encoded trust ID
+}
+
+// ParseScanURI parses a veritas://scan?id=... URI.
+func ParseScanURI(uri string) (ScanParams, error) {
+	uri = strings.TrimSpace(uri)
+	const prefix = "veritas://scan?"
+	if !strings.HasPrefix(uri, prefix) {
+		return ScanParams{}, &FabricError{Code: "decode", Message: "expected veritas://scan?... URI"}
+	}
+	query := uri[len(prefix):]
+	var id string
+	for _, pair := range strings.Split(query, "&") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 && parts[0] == "id" {
+			id = parts[1]
+		}
+	}
+	if id == "" {
+		return ScanParams{}, &FabricError{Code: "decode", Message: "missing id parameter"}
+	}
+	return ScanParams{ID: id}, nil
+}
+
 // VerificationBadge represents the trust state for a resolved handle.
 type VerificationBadge string
 
@@ -78,10 +104,33 @@ type ResolvedBatch struct {
 	Roots []string // hex-encoded root IDs
 }
 
+type anchorPool struct {
+	trusted     string // raw entries JSON
+	semiTrusted string // raw entries JSON
+	observed    string // raw entries JSON
+}
+
+func (p *anchorPool) merged() (string, error) {
+	allEntries := make([]json.RawMessage, 0)
+	for _, src := range []string{p.trusted, p.semiTrusted, p.observed} {
+		if src == "" {
+			continue
+		}
+		var entries []json.RawMessage
+		if err := json.Unmarshal([]byte(src), &entries); err != nil {
+			continue
+		}
+		allEntries = append(allEntries, entries...)
+	}
+	data, err := json.Marshal(allEntries)
+	return string(data), err
+}
+
 type Fabric struct {
 	client       *http.Client
 	pool         RelayPool
 	veritas      *libveritas.Veritas
+	anchors      anchorPool
 	zoneCache    map[string]libveritas.Zone
 	seeds        []string
 	trusted      *libveritas.TrustSet
@@ -128,9 +177,22 @@ func (f *Fabric) Trust(trustID string) error {
 	return f.updateAnchors(trustID, trustKindTrusted)
 }
 
-// TrustFromQr pins trust from a QR code payload (hex-encoded trust ID).
+// TrustFromQr parses a veritas://scan?id=... QR payload and pins as trusted.
 func (f *Fabric) TrustFromQr(payload string) error {
-	return f.Trust(strings.TrimSpace(payload))
+	params, err := ParseScanURI(payload)
+	if err != nil {
+		return err
+	}
+	return f.Trust(params.ID)
+}
+
+// SemiTrustFromQr parses a veritas://scan?id=... QR payload and pins as semi-trusted.
+func (f *Fabric) SemiTrustFromQr(payload string) error {
+	params, err := ParseScanURI(payload)
+	if err != nil {
+		return err
+	}
+	return f.SemiTrust(params.ID)
 }
 
 // Trusted returns the hex-encoded trusted trust ID, or empty string if none.
@@ -313,7 +375,7 @@ func (f *Fabric) updateAnchors(trustID string, kind trustKind) error {
 		peers = p
 	}
 
-	anchors, err := f.fetchAnchors(hash, peers)
+	anchors, entriesJSON, err := f.fetchAnchors(hash, peers)
 	if err != nil {
 		return err
 	}
@@ -323,21 +385,40 @@ func (f *Fabric) updateAnchors(trustID string, kind trustKind) error {
 		return &FabricError{Code: "decode", Message: "anchor root mismatch"}
 	}
 
-	v, err := libveritas.NewVeritas(anchors)
+	f.mu.Lock()
+	// Store raw entries JSON into the appropriate pool slot
+	switch kind {
+	case trustKindTrusted:
+		f.anchors.trusted = entriesJSON
+		f.trusted = &ts
+	case trustKindSemiTrusted:
+		f.anchors.semiTrusted = entriesJSON
+		f.semiTrusted = &ts
+	default:
+		f.anchors.observed = entriesJSON
+		f.observed = &ts
+	}
+
+	// Rebuild veritas from merged anchor entries
+	mergedJSON, mergeErr := f.anchors.merged()
+	f.mu.Unlock()
+
+	if mergeErr != nil {
+		return fmt.Errorf("merging anchors: %w", mergeErr)
+	}
+
+	mergedAnchors, mergeErr := libveritas.AnchorsFromJson(mergedJSON)
+	if mergeErr != nil {
+		return fmt.Errorf("parsing merged anchors: %w", mergeErr)
+	}
+
+	v, err := libveritas.NewVeritas(mergedAnchors)
 	if err != nil {
 		return fmt.Errorf("creating veritas: %w", err)
 	}
 
 	f.mu.Lock()
 	f.veritas = v
-	switch kind {
-	case trustKindTrusted:
-		f.trusted = &ts
-	case trustKindSemiTrusted:
-		f.semiTrusted = &ts
-	default:
-	}
-	f.observed = &ts
 	f.mu.Unlock()
 	return nil
 }
@@ -756,7 +837,7 @@ func (f *Fabric) fetchLatestTrustID() (string, []string, error) {
 	return parts[0], votes[bestKey].peers, nil
 }
 
-func (f *Fabric) fetchAnchors(hash string, peers []string) (*libveritas.Anchors, error) {
+func (f *Fabric) fetchAnchors(hash string, peers []string) (*libveritas.Anchors, string, error) {
 	var lastErr error = &FabricError{Code: "no_peers", Message: "no peers available"}
 
 	for _, u := range peers {
@@ -790,10 +871,10 @@ func (f *Fabric) fetchAnchors(hash string, peers []string) (*libveritas.Anchors,
 			continue
 		}
 
-		return anchors, nil
+		return anchors, string(entriesJSON), nil
 	}
 
-	return nil, lastErr
+	return nil, "", lastErr
 }
 
 func fetchPeers(client *http.Client, relayURL string) ([]PeerInfo, error) {

@@ -47,6 +47,26 @@ private val json = Json { ignoreUnknownKeys = true }
 
 private enum class TrustKind { Trusted, SemiTrusted, Observed }
 
+private class AnchorPool {
+    var trusted: String = ""      // raw entries JSON array string
+    var semiTrusted: String = ""  // raw entries JSON array string
+    var observed: String = ""     // raw entries JSON array string
+
+    fun merged(): String {
+        val parts = mutableListOf<String>()
+        for (src in listOf(trusted, semiTrusted, observed)) {
+            if (src.isNotEmpty()) {
+                // Strip outer brackets and add contents
+                val inner = src.trim().removePrefix("[").removeSuffix("]").trim()
+                if (inner.isNotEmpty()) parts.add(inner)
+            }
+        }
+        return "[${parts.joinToString(",")}]"
+    }
+}
+
+data class ScanParams(val id: String)
+
 class Fabric(
     private val seeds: List<String> = DEFAULT_SEEDS,
     var devMode: Boolean = false,
@@ -56,6 +76,7 @@ class Fabric(
     private var veritas: Veritas? = null
     private val zoneCache = mutableMapOf<String, Zone>()
     private val lock = Any()
+    private val anchorPool = AnchorPool()
 
     @Volatile private var trusted: TrustSet? = null
     @Volatile private var semiTrusted: TrustSet? = null
@@ -73,7 +94,15 @@ class Fabric(
         updateAnchors(trustId, TrustKind.Trusted)
     }
 
-    fun trustFromQr(payload: String) = trust(payload.trim())
+    fun trustFromQr(payload: String) {
+        val params = parseScanUri(payload)
+        trust(params.id)
+    }
+
+    fun semiTrustFromQr(payload: String) {
+        val params = parseScanUri(payload)
+        semiTrust(params.id)
+    }
 
     fun trusted(): String? = trusted?.id?.toHexString()
     fun observed(): String? = observed?.id?.toHexString()
@@ -135,18 +164,27 @@ class Fabric(
             peers = result.second
         }
 
-        val anchors = fetchAnchors(hash, peers)
+        val (anchors, entriesJson) = fetchAnchors(hash, peers)
         val v = Veritas(anchors)
 
         synchronized(lock) {
-            veritas = v
+            when (kind) {
+                TrustKind.Trusted -> anchorPool.trusted = entriesJson
+                TrustKind.SemiTrusted -> anchorPool.semiTrusted = entriesJson
+                TrustKind.Observed -> anchorPool.observed = entriesJson
+            }
+
+            // Rebuild veritas from merged anchors
+            val mergedJson = anchorPool.merged()
+            val mergedAnchors = Anchors.fromJson(mergedJson)
+            veritas = Veritas(mergedAnchors)
+
             val ts = anchors.computeTrustSet()
             when (kind) {
                 TrustKind.Trusted -> trusted = ts
                 TrustKind.SemiTrusted -> semiTrusted = ts
-                TrustKind.Observed -> {}
+                TrustKind.Observed -> observed = ts
             }
-            observed = ts
         }
     }
 
@@ -447,7 +485,7 @@ class Fabric(
         return Pair(parts[0], votes[bestKey]!!.peers)
     }
 
-    private fun fetchAnchors(hash: String, peers: List<String>): Anchors {
+    private fun fetchAnchors(hash: String, peers: List<String>): Pair<Anchors, String> {
         var lastErr: Exception = FabricError("no_peers", "no peers available")
 
         for (url in peers) {
@@ -481,7 +519,7 @@ class Fabric(
                     continue
                 }
 
-                return anchors
+                return Pair(anchors, entriesJson)
             } catch (e: FabricError) {
                 throw e
             } catch (e: Exception) {
@@ -517,6 +555,21 @@ class Fabric(
             ts.roots.any { it.contentEquals(rootBytes) }
         }
     }
+}
+
+fun parseScanUri(uri: String): ScanParams {
+    val trimmed = uri.trim()
+    val prefix = "veritas://scan?"
+    if (!trimmed.startsWith(prefix)) {
+        throw FabricError("decode", "expected veritas://scan?... URI")
+    }
+    val query = trimmed.removePrefix(prefix)
+    val params = query.split("&").associate {
+        val (k, v) = it.split("=", limit = 2)
+        k to v
+    }
+    val id = params["id"] ?: throw FabricError("decode", "missing id parameter")
+    return ScanParams(id)
 }
 
 // -- Utility functions --

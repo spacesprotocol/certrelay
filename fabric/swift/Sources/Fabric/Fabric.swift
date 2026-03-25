@@ -75,6 +75,57 @@ private enum TrustKind {
     case observed
 }
 
+// MARK: - Anchor pool
+
+private struct AnchorPool {
+    var trusted: String = ""      // raw entries JSON array string
+    var semiTrusted: String = ""  // raw entries JSON array string
+    var observed: String = ""     // raw entries JSON array string
+
+    func merged() -> String? {
+        var parts = [String]()
+        for src in [trusted, semiTrusted, observed] {
+            if src.isEmpty { continue }
+            let inner = src.trimmingCharacters(in: .whitespaces)
+                .dropFirst() // remove [
+                .dropLast()  // remove ]
+                .trimmingCharacters(in: .whitespaces)
+            if !inner.isEmpty {
+                parts.append(String(inner))
+            }
+        }
+        if parts.isEmpty { return nil }
+        return "[\(parts.joined(separator: ","))]"
+    }
+}
+
+// MARK: - Scan params
+
+/// Parsed parameters from a veritas://scan?... URI.
+public struct ScanParams {
+    public let id: String  // hex-encoded trust ID
+
+    public static func parse(_ uri: String) throws -> ScanParams {
+        let trimmed = uri.trimmingCharacters(in: .whitespaces)
+        let prefix = "veritas://scan?"
+        guard trimmed.hasPrefix(prefix) else {
+            throw FabricError.decode("expected veritas://scan?... URI")
+        }
+        let query = String(trimmed.dropFirst(prefix.count))
+        var id: String?
+        for pair in query.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 && parts[0] == "id" {
+                id = String(parts[1])
+            }
+        }
+        guard let id else {
+            throw FabricError.decode("missing id parameter")
+        }
+        return ScanParams(id: id)
+    }
+}
+
 // MARK: - Fabric client
 
 public final class Fabric: @unchecked Sendable {
@@ -86,6 +137,7 @@ public final class Fabric: @unchecked Sendable {
     private var trusted: TrustSet?
     private var semiTrusted: TrustSet?
     private var observed: TrustSet?
+    private var anchorPool = AnchorPool()
     public var preferLatest: Bool
     private let devMode: Bool
     private let lock = NSLock()
@@ -172,9 +224,16 @@ public final class Fabric: @unchecked Sendable {
         try await updateAnchors(kind: .semiTrusted(trustID))
     }
 
-    /// Pin trust from a QR code payload.
+    /// Parse a veritas://scan?id=... QR payload and pin as trusted.
     public func trustFromQr(_ payload: String) async throws {
-        try await trust(payload.trimmingCharacters(in: .whitespaces))
+        let params = try ScanParams.parse(payload)
+        try await trust(params.id)
+    }
+
+    /// Parse a veritas://scan?id=... QR payload and pin as semi-trusted.
+    public func semiTrustFromQr(_ payload: String) async throws {
+        let params = try ScanParams.parse(payload)
+        try await semiTrust(params.id)
     }
 
     /// Clear the trusted state.
@@ -213,25 +272,36 @@ public final class Fabric: @unchecked Sendable {
             peers = result.peers
         }
 
-        let anchors = try await fetchAnchors(hash: hash, peers: peers)
+        let (anchors, entriesJson) = try await fetchAnchors(hash: hash, peers: peers)
         let ts = anchors.computeTrustSet()
         if Data(ts.id).hexString != hash {
             throw FabricError.decode("anchor root mismatch")
         }
 
-        let v = try Veritas(anchors: anchors)
-
         lock.lock()
-        _veritas = v
+        switch kind {
+        case .trusted:
+            anchorPool.trusted = entriesJson
+        case .semiTrusted:
+            anchorPool.semiTrusted = entriesJson
+        case .observed:
+            anchorPool.observed = entriesJson
+        }
+
+        // Rebuild veritas from merged anchors
+        if let mergedJson = anchorPool.merged() {
+            let mergedAnchors = try Anchors.fromJson(json: mergedJson)
+            _veritas = try Veritas(anchors: mergedAnchors)
+        }
+
         switch kind {
         case .trusted:
             trusted = ts
         case .semiTrusted:
             semiTrusted = ts
         case .observed:
-            break
+            observed = ts
         }
-        observed = ts
         lock.unlock()
     }
 
@@ -611,8 +681,8 @@ public final class Fabric: @unchecked Sendable {
         return (hash: root, peers: best.value.peers)
     }
 
-    /// Fetch and verify anchors from a peer.
-    private func fetchAnchors(hash: String, peers: [String]) async throws -> Anchors {
+    /// Fetch and verify anchors from a peer. Returns the Anchors and the raw entries JSON string.
+    private func fetchAnchors(hash: String, peers: [String]) async throws -> (Anchors, String) {
         let expectedRoot = hexDecode(hash)
         var lastError: FabricError = .noPeers
         for url in peers {
@@ -639,7 +709,7 @@ public final class Fabric: @unchecked Sendable {
                     lastError = .decode("anchor root mismatch")
                     continue
                 }
-                return anchors
+                return (anchors, entriesStr)
             } catch let error as FabricError {
                 lastError = error
             } catch {
