@@ -67,6 +67,14 @@ public struct ResolvedBatch {
     public let roots: [String]  // hex-encoded root IDs
 }
 
+// MARK: - Trust kind
+
+private enum TrustKind {
+    case trusted(String)
+    case semiTrusted(String)
+    case observed
+}
+
 // MARK: - Fabric client
 
 public final class Fabric: @unchecked Sendable {
@@ -76,6 +84,7 @@ public final class Fabric: @unchecked Sendable {
     private var zoneCache: [String: Zone] = [:]
     private let seeds: [String]
     private var trusted: TrustSet?
+    private var semiTrusted: TrustSet?
     private var observed: TrustSet?
     public var preferLatest: Bool
     private let devMode: Bool
@@ -96,6 +105,13 @@ public final class Fabric: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return trusted.map { Data($0.id).hexString }
+    }
+
+    /// The semi-trusted trust ID, or nil.
+    public var semiTrustedID: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return semiTrusted.map { Data($0.id).hexString }
     }
 
     /// The latest observed trust ID, or nil.
@@ -123,7 +139,7 @@ public final class Fabric: @unchecked Sendable {
             try await bootstrapPeers()
         }
         if _veritas == nil || _veritas!.newestAnchor() == 0 {
-            try await updateAnchors()
+            try await updateAnchors(kind: .observed)
         }
     }
 
@@ -147,7 +163,13 @@ public final class Fabric: @unchecked Sendable {
     /// Pin a specific trust ID.
     public func trust(_ trustID: String) async throws {
         if pool.isEmpty { try await bootstrapPeers() }
-        try await updateAnchors(trustID: trustID)
+        try await updateAnchors(kind: .trusted(trustID))
+    }
+
+    /// Set a semi-trusted anchor from an external source (e.g. public explorer).
+    public func semiTrust(_ trustID: String) async throws {
+        if pool.isEmpty { try await bootstrapPeers() }
+        try await updateAnchors(kind: .semiTrusted(trustID))
     }
 
     /// Pin trust from a QR code payload.
@@ -169,22 +191,23 @@ public final class Fabric: @unchecked Sendable {
     public func badgeFor(sovereignty: String, roots: [String]) -> VerificationBadge {
         let isTrusted = areRootsTrusted(roots)
         let isObserved = isTrusted || areRootsObserved(roots)
+        let isSemiTrusted = isTrusted || areRootsSemiTrusted(roots)
         if isTrusted && sovereignty == "sovereign" { return .orange }
-        if isObserved && !isTrusted { return .unverified }
+        if isObserved && !isTrusted && !isSemiTrusted { return .unverified }
         return .none
     }
 
     // MARK: - Anchors
 
-    public func updateAnchors(trustID: String? = nil) async throws {
-        let isTrusted = trustID != nil
+    public func updateAnchors(kind: TrustKind = .observed) async throws {
         let hash: String
         var peers: [String]
 
-        if let trustID {
-            hash = trustID
+        switch kind {
+        case .trusted(let id), .semiTrusted(let id):
+            hash = id
             peers = pool.shuffledUrls(4)
-        } else {
+        case .observed:
             let result = try await fetchLatestTrustID()
             hash = result.hash
             peers = result.peers
@@ -200,8 +223,13 @@ public final class Fabric: @unchecked Sendable {
 
         lock.lock()
         _veritas = v
-        if isTrusted {
+        switch kind {
+        case .trusted:
             trusted = ts
+        case .semiTrusted:
+            semiTrusted = ts
+        case .observed:
+            break
         }
         observed = ts
         lock.unlock()
@@ -508,6 +536,15 @@ public final class Fabric: @unchecked Sendable {
     private func areRootsObserved(_ roots: [String]) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = observed else { return false }
+        return roots.allSatisfy { root in
+            guard let rootBytes = Data(hexString: root) else { return false }
+            return ts.roots.contains { Data($0) == rootBytes }
+        }
+    }
+
+    private func areRootsSemiTrusted(_ roots: [String]) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let ts = semiTrusted else { return false }
         return roots.allSatisfy { root in
             guard let rootBytes = Data(hexString: root) else { return false }
             return ts.roots.contains { Data($0) == rootBytes }

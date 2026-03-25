@@ -45,6 +45,8 @@ data class ResolvedBatch(val zones: List<Zone>, val roots: List<String>)
 
 private val json = Json { ignoreUnknownKeys = true }
 
+private enum class TrustKind { Trusted, SemiTrusted, Observed }
+
 class Fabric(
     private val seeds: List<String> = DEFAULT_SEEDS,
     var devMode: Boolean = false,
@@ -56,6 +58,7 @@ class Fabric(
     private val lock = Any()
 
     @Volatile private var trusted: TrustSet? = null
+    @Volatile private var semiTrusted: TrustSet? = null
     @Volatile private var observed: TrustSet? = null
 
     val relays: List<String> get() = pool.urls()
@@ -67,13 +70,20 @@ class Fabric(
 
     fun trust(trustId: String) {
         if (pool.isEmpty) bootstrapPeers()
-        updateAnchors(trustId)
+        updateAnchors(trustId, TrustKind.Trusted)
     }
 
     fun trustFromQr(payload: String) = trust(payload.trim())
 
     fun trusted(): String? = trusted?.id?.toHexString()
     fun observed(): String? = observed?.id?.toHexString()
+
+    fun semiTrust(trustId: String) {
+        if (pool.isEmpty) bootstrapPeers()
+        updateAnchors(trustId, TrustKind.SemiTrusted)
+    }
+
+    fun semiTrusted(): String? = semiTrusted?.id?.toHexString()
 
     fun clearTrusted() { trusted = null }
 
@@ -83,9 +93,10 @@ class Fabric(
     fun badgeFor(sovereignty: String, roots: List<String>): VerificationBadge {
         val isTrusted = areRootsTrusted(roots)
         val isObserved = isTrusted || areRootsObserved(roots)
+        val isSemiTrusted = isTrusted || areRootsSemiTrusted(roots)
         return when {
             isTrusted && sovereignty == "sovereign" -> VerificationBadge.Orange
-            isObserved && !isTrusted -> VerificationBadge.Unverified
+            isObserved && !isTrusted && !isSemiTrusted -> VerificationBadge.Unverified
             else -> VerificationBadge.None
         }
     }
@@ -95,7 +106,7 @@ class Fabric(
     fun bootstrap() {
         if (pool.isEmpty) bootstrapPeers()
         if (veritas == null || veritas!!.newestAnchor() == 0u) {
-            updateAnchors("")
+            updateAnchors("", TrustKind.Observed)
         }
     }
 
@@ -111,12 +122,11 @@ class Fabric(
         pool.refresh(urls.toList())
     }
 
-    fun updateAnchors(trustId: String = "") {
-        val isTrusted = trustId.isNotEmpty()
+    fun updateAnchors(trustId: String = "", kind: TrustKind = if (trustId.isNotEmpty()) TrustKind.Trusted else TrustKind.Observed) {
         val hash: String
         val peers: List<String>
 
-        if (isTrusted) {
+        if (kind == TrustKind.Trusted || kind == TrustKind.SemiTrusted) {
             hash = trustId
             peers = pool.shuffledUrls(4)
         } else {
@@ -131,8 +141,10 @@ class Fabric(
         synchronized(lock) {
             veritas = v
             val ts = anchors.computeTrustSet()
-            if (isTrusted) {
-                trusted = ts
+            when (kind) {
+                TrustKind.Trusted -> trusted = ts
+                TrustKind.SemiTrusted -> semiTrusted = ts
+                TrustKind.Observed -> {}
             }
             observed = ts
         }
@@ -492,6 +504,14 @@ class Fabric(
 
     private fun areRootsObserved(roots: List<String>): Boolean {
         val ts = observed ?: return false
+        return roots.all { root ->
+            val rootBytes = root.hexToByteArray()
+            ts.roots.any { it.contentEquals(rootBytes) }
+        }
+    }
+
+    private fun areRootsSemiTrusted(roots: List<String>): Boolean {
+        val ts = semiTrusted ?: return false
         return roots.all { root ->
             val rootBytes = root.hexToByteArray()
             ts.roots.any { it.contentEquals(rootBytes) }

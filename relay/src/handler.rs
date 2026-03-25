@@ -8,20 +8,20 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use libveritas::builder::{DataUpdateRequest, MessageBuilder};
 use resolver::{EpochResult, HandleHint, SpaceHint};
-use crate::anchor::AnchorStore;
+use crate::anchor::AnchorSets;
 use crate::spaced::SpacedClient;
 use crate::store::{HandleRecord, SqliteStore};
 
 /// Certificate handler that verifies messages and stores zones/handles.
 pub struct Handler {
     pub veritas: Mutex<Veritas>,
-    pub anchor_store: Mutex<AnchorStore>,
+    pub anchor_store: Mutex<AnchorSets>,
     pub store: SqliteStore,
     pub dev_mode: bool,
 }
 
 impl Handler {
-    pub fn new(veritas: Veritas, store: SqliteStore, anchor_store: AnchorStore) -> Self {
+    pub fn new(veritas: Veritas, store: SqliteStore, anchor_store: AnchorSets) -> Self {
         Self {
             veritas: Mutex::new(veritas),
             anchor_store: Mutex::new(anchor_store),

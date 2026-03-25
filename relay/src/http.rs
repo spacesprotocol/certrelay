@@ -338,7 +338,7 @@ async fn handle_anchors(
                 Ok(r) => r,
                 Err(_) => return (StatusCode::BAD_REQUEST, headers, "root must be 32 bytes").into_response(),
             };
-            store.get(root).cloned()
+            store.get(resolver::TrustId::from(root)).cloned()
         }
         None => store.latest().cloned(),
     };

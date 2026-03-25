@@ -9,7 +9,7 @@ use spaces_protocol::bitcoin::BlockHash;
 use spaces_protocol::bitcoin::hashes::Hash as HashUtil;
 use spaces_protocol::constants::ChainAnchor;
 use spaces_nums::RootAnchor;
-use crate::anchor::AnchorStore;
+use crate::anchor::AnchorSets;
 use crate::create_relay_veritas;
 use crate::handler::Handler;
 use crate::http::{self, AppState, DEFAULT_MAX_MESSAGE_SIZE};
@@ -108,7 +108,7 @@ impl Relay {
 
         let rpc_client = builder.build(&url)?;
         let veritas = create_relay_veritas(config.anchors.clone())?;
-        let anchor_store = AnchorStore::from_anchors(config.anchors);
+        let anchor_store = AnchorSets::from_anchors(config.anchors);
 
         let store = SqliteStore::open(&config.db_path)?;
         let chain = SpacedClient::new(rpc_client);

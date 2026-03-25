@@ -8,7 +8,7 @@ pub mod relay;
 pub mod store;
 pub mod spaced;
 
-pub mod anchor;
+pub use resolver::anchor;
 
 use libveritas::{AnchorError, Veritas};
 pub use http::{

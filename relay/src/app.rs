@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
 use crate::{bootstrap, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner};
-use crate::anchor::AnchorStore;
+use crate::anchor::AnchorSets;
 
 #[derive(Parser)]
 #[command(name = "certrelay", about = "Certificate relay for the Spaces protocol")]
@@ -125,7 +125,7 @@ pub async fn run(
 
 async fn refresh_anchors(state: &AppState) -> anyhow::Result<()> {
     let mut anchors = state.chain.get_root_anchors().await?;
-    let anchor_store = AnchorStore::from_anchors(anchors.clone());
+    let anchor_store = AnchorSets::from_anchors(anchors.clone());
     anchors.truncate(ROOT_ANCHORS_COUNT as _);
     let new_veritas = create_relay_veritas(anchors)?;
     *state.handler.veritas.lock().unwrap() = new_veritas;
