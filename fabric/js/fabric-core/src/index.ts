@@ -1,10 +1,11 @@
-export { Fabric, FabricError } from "./fabric.js";
+export { Fabric, FabricError, parseScanUri } from "./fabric.js";
 export type {
   FabricOptions,
   PeerInfo,
   VerificationBadge,
   Resolved,
   ResolvedBatch,
+  ScanParams,
 } from "./fabric.js";
 export { RelayPool } from "./pool.js";
 export { compareHints } from "./hints.js";

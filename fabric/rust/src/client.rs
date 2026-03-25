@@ -20,6 +20,39 @@ pub struct AnchorBundle {
     pub anchors: Vec<spaces_nums::RootAnchor>,
 }
 
+/// Parsed parameters from a `veritas://scan?id=...` QR code.
+pub struct ScanParams {
+    pub id: TrustId,
+}
+
+impl ScanParams {
+    /// Parse a `veritas://scan?id={hex}` URI.
+    pub fn parse(uri: &str) -> Result<Self> {
+        let uri = uri.trim();
+        let query = uri.strip_prefix("veritas://scan?")
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "expected veritas://scan?... URI",
+            ))?;
+
+        let mut id = None;
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                if key == "id" {
+                    id = Some(TrustId::from_str(value)?);
+                }
+            }
+        }
+
+        Ok(Self {
+            id: id.ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "missing id parameter",
+            ))?,
+        })
+    }
+}
+
 pub struct Fabric {
     http: reqwest::Client,
     pool: RelayPool,
@@ -34,8 +67,30 @@ pub struct Fabric {
     /// Trust anchor from a semi-trusted source (e.g. public explorer over HTTPS).
     /// Removes the "unverified" badge but never shows the orange checkmark.
     semi_trusted: Mutex<Option<TrustSet>>,
+    /// Raw anchors per source, merged into a single Veritas.
+    anchor_pool: Mutex<AnchorPool>,
     /// Whether to look for the latest zone from multiple peers
     prefer_latest: AtomicBool,
+}
+
+/// Keeps raw anchors from each trust source so they can be merged into one Veritas.
+#[derive(Default)]
+struct AnchorPool {
+    trusted: Vec<spaces_nums::RootAnchor>,
+    semi_trusted: Vec<spaces_nums::RootAnchor>,
+    observed: Vec<spaces_nums::RootAnchor>,
+}
+
+impl AnchorPool {
+    fn merged(&self) -> Vec<spaces_nums::RootAnchor> {
+        let mut all = Vec::new();
+        all.extend_from_slice(&self.trusted);
+        all.extend_from_slice(&self.semi_trusted);
+        all.extend_from_slice(&self.observed);
+        all.sort_by(|a, b| b.block.height.cmp(&a.block.height));
+        all.dedup_by_key(|a| a.block.height);
+        all
+    }
 }
 
 pub struct RelayPool {
@@ -97,6 +152,7 @@ impl Fabric {
             observed: Mutex::new(None),
             trusted: Mutex::new(None),
             semi_trusted: Mutex::new(None),
+            anchor_pool: Mutex::new(AnchorPool::default()),
             prefer_latest: AtomicBool::new(true),
         }
     }
@@ -202,10 +258,30 @@ impl Fabric {
         self.semi_trusted.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
     }
 
-    /// Pin trust from a QR code payload (hex-encoded trust id).
+    /// Pin trust directly from an AnchorSet. No network requests.
+    /// Returns the computed TrustId.
+    pub fn trust_from_set(&self, set: &crate::AnchorSet) -> Result<TrustId> {
+        let trust_set = compute_trust_set(&set.entries);
+        let id = TrustId::from(trust_set.id);
+        let mut pool = self.anchor_pool.lock().unwrap();
+        pool.trusted = set.entries.clone();
+        let v = Veritas::new().with_anchors(pool.merged())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))?;
+        *self.veritas.lock().unwrap() = v;
+        *self.trusted.lock().unwrap() = Some(trust_set);
+        Ok(id)
+    }
+
+    /// Parse a `veritas://scan?id=...` QR payload and pin as trusted.
     pub async fn trust_from_qr(&self, payload: &str) -> Result<()> {
-        let trust_id = TrustId::from_str(payload.trim())?;
-        self.trust(trust_id).await
+        let params = ScanParams::parse(payload)?;
+        self.trust(params.id).await
+    }
+
+    /// Parse a `veritas://scan?id=...` QR payload and pin as semi-trusted.
+    pub async fn semi_trust_from_qr(&self, payload: &str) -> Result<()> {
+        let params = ScanParams::parse(payload)?;
+        self.semi_trust(params.id).await
     }
 
     /// Clear the trusted state. Badge will never return Orange until trust is pinned again.
@@ -231,18 +307,21 @@ impl Fabric {
 
         let ab = fetch_anchor_set(&self.http, id, &peers).await?;
 
-        if let Ok(v) = Veritas::new().with_anchors(ab.anchors) {
+        let mut pool = self.anchor_pool.lock().unwrap();
+        match &kind {
+            TrustKind::Trusted(_) => pool.trusted = ab.anchors,
+            TrustKind::SemiTrusted(_) => pool.semi_trusted = ab.anchors,
+            TrustKind::Observed => pool.observed = ab.anchors,
+        }
+        if let Ok(v) = Veritas::new().with_anchors(pool.merged()) {
             *self.veritas.lock().unwrap() = v;
-            match kind {
-                TrustKind::Trusted(_) => {
-                    *self.trusted.lock().unwrap() = Some(ab.trust_set.clone());
-                }
-                TrustKind::SemiTrusted(_) => {
-                    *self.semi_trusted.lock().unwrap() = Some(ab.trust_set.clone());
-                }
-                TrustKind::Observed => {}
-            }
-            *self.observed.lock().unwrap() = Some(ab.trust_set);
+        }
+        drop(pool);
+
+        match kind {
+            TrustKind::Trusted(_) => *self.trusted.lock().unwrap() = Some(ab.trust_set),
+            TrustKind::SemiTrusted(_) => *self.semi_trusted.lock().unwrap() = Some(ab.trust_set),
+            TrustKind::Observed => *self.observed.lock().unwrap() = Some(ab.trust_set),
         }
         Ok(())
     }
