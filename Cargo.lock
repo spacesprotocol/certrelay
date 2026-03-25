@@ -692,7 +692,7 @@ dependencies = [
 [[package]]
 name = "borsh_utils"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#253667d6b2839fecfedfd3ac99a2246c13dd974c"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4c8d2223d1e20e8de694e8262c37f16416858840"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -1952,9 +1952,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1744e39d1d6a9948f4f388969627434e31128196de472883b39f148769bfe30a"
+checksum = "7ddbf48fd451246b1f8c2610bd3b4ac0cc6e149d89832867093ab69a17194f08"
 dependencies = [
  "libc",
 ]
@@ -1973,7 +1973,7 @@ dependencies = [
 [[package]]
 name = "libveritas"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#262dc8b12f13a2b9b5a0f0d6474e9cc921616b85"
+source = "git+https://github.com/spacesprotocol/libveritas.git#4311db72e2c939ffc5f6a99357e77ea31bb6b68c"
 dependencies = [
  "base64 0.22.1",
  "borsh",
@@ -1991,7 +1991,7 @@ dependencies = [
 [[package]]
 name = "libveritas_testutil"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#262dc8b12f13a2b9b5a0f0d6474e9cc921616b85"
+source = "git+https://github.com/spacesprotocol/libveritas.git#4311db72e2c939ffc5f6a99357e77ea31bb6b68c"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -2009,7 +2009,7 @@ dependencies = [
 [[package]]
 name = "libveritas_zk"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#262dc8b12f13a2b9b5a0f0d6474e9cc921616b85"
+source = "git+https://github.com/spacesprotocol/libveritas.git#4311db72e2c939ffc5f6a99357e77ea31bb6b68c"
 dependencies = [
  "borsh",
  "serde",
@@ -2443,9 +2443,9 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37566cb3fdacef14c0737f9546df7cfeadbfbc9fef10991038bf5015d0c80532"
+checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
 dependencies = [
  "bitflags 2.11.0",
  "num-traits",
@@ -3301,7 +3301,7 @@ dependencies = [
 [[package]]
 name = "sip7"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#253667d6b2839fecfedfd3ac99a2246c13dd974c"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4c8d2223d1e20e8de694e8262c37f16416858840"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -3358,19 +3358,20 @@ dependencies = [
 [[package]]
 name = "spacedb"
 version = "0.0.12"
-source = "git+https://github.com/spacesprotocol/spacedb.git#92c150ea5a368c7ec894ef3530992abd2f7d6012"
+source = "git+https://github.com/spacesprotocol/spacedb.git#43f23e78e4e5fffb8d89661a4b7f39ab43a5a644"
 dependencies = [
  "bincode",
  "borsh",
  "hex",
  "libc",
+ "rusqlite",
  "sha2",
 ]
 
 [[package]]
 name = "spaces_client"
 version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#253667d6b2839fecfedfd3ac99a2246c13dd974c"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4c8d2223d1e20e8de694e8262c37f16416858840"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3387,6 +3388,7 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "sip7",
@@ -3403,7 +3405,7 @@ dependencies = [
 [[package]]
 name = "spaces_nums"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#253667d6b2839fecfedfd3ac99a2246c13dd974c"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4c8d2223d1e20e8de694e8262c37f16416858840"
 dependencies = [
  "bech32",
  "bitcoin",
@@ -3418,7 +3420,7 @@ dependencies = [
 [[package]]
 name = "spaces_protocol"
 version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#253667d6b2839fecfedfd3ac99a2246c13dd974c"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4c8d2223d1e20e8de694e8262c37f16416858840"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -3429,7 +3431,7 @@ dependencies = [
 [[package]]
 name = "spaces_wallet"
 version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#253667d6b2839fecfedfd3ac99a2246c13dd974c"
+source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#4c8d2223d1e20e8de694e8262c37f16416858840"
 dependencies = [
  "anyhow",
  "bdk_wallet",
@@ -4399,7 +4401,7 @@ dependencies = [
 [[package]]
 name = "yuki"
 version = "0.0.1"
-source = "git+https://github.com/imperviousinc/yuki.git#a833507ba7b0206fca9e6ae357d8cb46561e12f0"
+source = "git+https://github.com/imperviousinc/yuki.git#a90ee8a9ef09629b84cd61d1458c9c6544977ebb"
 dependencies = [
  "anyhow",
  "bincode",

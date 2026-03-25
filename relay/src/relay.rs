@@ -262,6 +262,7 @@ impl ServiceRunner {
 
     fn yuki_args(&self) -> Vec<String> {
         vec![
+            "yuki".into(),
             "--chain".into(), self.network.to_string(),
             "--rpc-port".into(), Self::yuki_port(self.network).to_string(),
             "--data-dir".into(), self.data_dir.join("yuki").to_str().unwrap().to_string(),
@@ -270,12 +271,14 @@ impl ServiceRunner {
 
     fn spaced_args(&self) -> Vec<String> {
         vec![
+            "spaced".into(),
             "--chain".into(), self.network.to_string(),
             "--rpc-port".into(), Self::spaced_port(self.network).to_string(),
             "--data-dir".into(), self.spaced_data_dir().to_str().unwrap().to_string(),
             "--bitcoin-rpc-url".into(), self.yuki_url(),
             "--bitcoin-rpc-light".into(),
             "--num-anchors".into(), (ROOT_ANCHORS_COUNT * 2).to_string(),
+            "--index-node-hashes".into(),
         ]
     }
 
