@@ -9,8 +9,8 @@ use libveritas_testutil::fixture::*;
 use relay::{
     AppState, Config, ExtendedNetwork, Handler, PeerInfo, Relay, SqliteStore,
 };
-use relay::anchor::AnchorStore;
-use resolver::{AnchorResponse, HintsResponse};
+use relay::anchor::AnchorSets;
+use resolver::{AnchorSet, HintsResponse};
 use spaces_protocol::slabel::SLabel;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ fn build_veritas(state: &ChainState) -> Veritas {
 fn setup_handler(state: &ChainState) -> Handler {
     let veritas = build_veritas(state);
     let store = SqliteStore::in_memory().unwrap();
-    let mut handler = Handler::new(veritas, store, AnchorStore::from_anchors(vec![]));
+    let mut handler = Handler::new(veritas, store, AnchorSets::from_anchors(vec![]));
     handler.dev_mode = true;
     handler
 }
@@ -63,7 +63,7 @@ async fn start_relay(chain_state: &ChainState) -> (String, Arc<AppState>) {
     let relay = Relay::new(config).unwrap();
     *relay.state().handler.veritas.lock().unwrap() = build_veritas(chain_state);
     *relay.state().handler.anchor_store.lock().unwrap() =
-        AnchorStore::from_anchors(test_anchors(chain_state));
+        AnchorSets::from_anchors(test_anchors(chain_state));
 
     let state = relay.state().clone();
 
@@ -438,8 +438,8 @@ async fn test_anchors_endpoint() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
 
-    let anchor_set: AnchorResponse = resp.json().await
-        .expect("anchors response should be valid JSON AnchorResponse");
+    let anchor_set: AnchorSet = resp.json().await
+        .expect("anchors response should be valid JSON AnchorSet");
     assert!(!anchor_set.entries.is_empty(), "should have anchor entries");
     assert!(anchor_set.root_matches(), "anchor root hash should match");
 
@@ -452,7 +452,7 @@ async fn test_anchors_endpoint() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
 
-    let fetched: AnchorResponse = resp.json().await
+    let fetched: AnchorSet = resp.json().await
         .expect("anchors response with root param should be valid JSON");
     assert_eq!(fetched.trust_id, anchor_set.trust_id, "fetched anchor root should match");
 

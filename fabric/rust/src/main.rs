@@ -1,4 +1,5 @@
-use fabric::client::{Fabric, TrustId};
+use fabric::TrustId;
+use fabric::client::Fabric;
 use std::str::FromStr;
 
 #[tokio::main]

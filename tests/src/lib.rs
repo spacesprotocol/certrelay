@@ -9,7 +9,7 @@ use libveritas_testutil::fixture::ChainState;
 use relay::{
     AppState, Handler, PeerConfig, SqliteStore, SpacedClient, router,
 };
-use relay::anchor::AnchorStore;
+use fabric::anchor::AnchorSets;
 use relay::http::{Quota, RateLimitConfig};
 use spaces_protocol::slabel::SLabel;
 use spaces_nums::RootAnchor;
@@ -48,7 +48,7 @@ pub fn mock_chain_proof(state: &ChainState) -> (ChainProof, Vec<RootAnchor>) {
 pub fn setup_handler(state: &ChainState) -> Handler {
     let veritas = build_veritas(state);
     let store = SqliteStore::in_memory().unwrap();
-    let mut handler = Handler::new(veritas, store, AnchorStore::from_anchors(vec![]));
+    let mut handler = Handler::new(veritas, store, AnchorSets::from_anchors(vec![]));
     handler.dev_mode = true;
     handler
 }
@@ -74,7 +74,7 @@ pub fn build_ctx(handler: &Handler, spaces: &[SLabel]) -> QueryContext {
 pub async fn start_relay(chain_state: &ChainState) -> (String, Arc<AppState>) {
     let veritas = build_veritas(chain_state);
     let store = SqliteStore::in_memory().unwrap();
-    let anchor_store = AnchorStore::from_anchors(test_anchors(chain_state));
+    let anchor_store = AnchorSets::from_anchors(test_anchors(chain_state));
     let mut handler = Handler::new(veritas, store, anchor_store);
     handler.dev_mode = true;
     let chain = SpacedClient::mock(mock_chain_proof(chain_state));

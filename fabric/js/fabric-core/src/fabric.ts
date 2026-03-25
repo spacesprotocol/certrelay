@@ -96,6 +96,7 @@ export class Fabric {
   private seeds: string[];
   private devMode: boolean;
   private _trusted: { id: Uint8Array; roots: Uint8Array[] } | null = null;
+  private _semiTrusted: { id: Uint8Array; roots: Uint8Array[] } | null = null;
   private _observed: { id: Uint8Array; roots: Uint8Array[] } | null = null;
   preferLatest: boolean;
 
@@ -122,7 +123,7 @@ export class Fabric {
     if (this.needsPeers()) {
       await this.bootstrapPeers();
     }
-    await this.updateAnchors(trustId);
+    await this.updateAnchors(trustId, "trusted");
   }
 
   /** Trust from a QR code payload (the payload is the trust ID hex string). */
@@ -138,6 +139,19 @@ export class Fabric {
   /** Returns the hex-encoded observed trust ID from the latest anchor fetch, or null. */
   observed(): string | null {
     return this._observed ? toHex(this._observed.id) : null;
+  }
+
+  /** Set a semi-trusted anchor from an external source (e.g. public explorer). */
+  async semiTrust(trustId: string): Promise<void> {
+    if (this.needsPeers()) {
+      await this.bootstrapPeers();
+    }
+    await this.updateAnchors(trustId, "semi_trusted");
+  }
+
+  /** Returns the hex-encoded semi-trusted trust ID, or null. */
+  semiTrusted(): string | null {
+    return this._semiTrusted ? toHex(this._semiTrusted.id) : null;
   }
 
   /** Clear the trusted anchor set. */
@@ -156,11 +170,12 @@ export class Fabric {
   badgeFor(sovereignty: string, roots: string[]): VerificationBadge {
     const isTrusted = this.areRootsTrusted(roots);
     const isObserved = isTrusted || this.areRootsObserved(roots);
+    const isSemiTrusted = isTrusted || this.areRootsSemiTrusted(roots);
 
     if (isTrusted && sovereignty === "sovereign") {
       return "orange";
     }
-    if (isObserved && !isTrusted) {
+    if (isObserved && !isTrusted && !isSemiTrusted) {
       return "unverified";
     }
     return "none";
@@ -176,6 +191,12 @@ export class Fabric {
     if (!this._observed) return false;
     const observedSet = new Set(this._observed.roots.map(r => toHex(r)));
     return roots.every(root => observedSet.has(root));
+  }
+
+  private areRootsSemiTrusted(roots: string[]): boolean {
+    if (!this._semiTrusted) return false;
+    const semiSet = new Set(this._semiTrusted.roots.map(r => toHex(r)));
+    return roots.every(root => semiSet.has(root));
   }
 
   // ── Publish ──
@@ -234,13 +255,12 @@ export class Fabric {
     this.pool.refresh(urls);
   }
 
-  async updateAnchors(trustId?: string): Promise<void> {
-    const isTrusted = !!trustId;
+  async updateAnchors(trustId?: string, kind: "trusted" | "semi_trusted" | "observed" = trustId ? "trusted" : "observed"): Promise<void> {
     let hash: string;
     let peers: string[];
 
-    if (trustId) {
-      hash = trustId;
+    if (kind === "trusted" || kind === "semi_trusted") {
+      hash = trustId!;
       peers = this.pool.shuffledUrls(4);
     } else {
       const result = await this.fetchLatestTrustId();
@@ -256,8 +276,13 @@ export class Fabric {
     }
 
     this.veritas = this.provider.createVeritas(anchors);
-    if (isTrusted) {
-      this._trusted = trustSet;
+    switch (kind) {
+      case "trusted":
+        this._trusted = trustSet;
+        break;
+      case "semi_trusted":
+        this._semiTrusted = trustSet;
+        break;
     }
     this._observed = trustSet;
   }

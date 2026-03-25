@@ -5,6 +5,7 @@
 
 
 
+pub mod anchor;
 #[cfg(feature = "client")]
 pub mod client;
 pub mod seeds;
@@ -12,7 +13,9 @@ pub mod seeds;
 pub mod signing;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::net::IpAddr;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +24,39 @@ pub extern crate libveritas;
 // Also re-export Message directly since it's used in the wire format
 pub use libveritas::msg::Message;
 use spaces_nums::RootAnchor;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TrustId([u8; 32]);
+
+impl TrustId {
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl fmt::Display for TrustId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl From<[u8; 32]> for TrustId {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl FromStr for TrustId {
+    type Err = hex::FromHexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes: [u8; 32] = hex::decode(s)?
+            .try_into()
+            .map_err(|_| hex::FromHexError::InvalidStringLength)?;
+
+        Ok(Self(bytes))
+    }
+}
 
 /// Capability flags for peers.
 ///
@@ -64,7 +100,7 @@ pub struct HintsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AnchorResponse {
+pub struct AnchorSet {
     pub entries: Vec<RootAnchor>,
 }
 
@@ -240,7 +276,7 @@ impl PeerInfo {
     }
 }
 
-impl AnchorResponse {
+impl AnchorSet {
     pub fn from_anchors(anchors: Vec<RootAnchor>) -> Self {
         Self {
             entries: anchors,

@@ -1,4 +1,3 @@
-use std::cmp::PartialEq;
 use libveritas::builder::MessageBuilder;
 use libveritas::cert::CertificateChain;
 use libveritas::msg::{ChainProof, OffchainRecords, QueryContext};
@@ -11,35 +10,14 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
-use crate::{AnchorResponse, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest};
+use crate::{AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId};
 use crate::seeds::SEEDS;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TrustId([u8; 32]);
-
 pub struct AnchorBundle {
     pub trust_set: TrustSet,
     pub anchors: Vec<spaces_nums::RootAnchor>,
-}
-
-impl fmt::Display for TrustId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
-impl FromStr for TrustId {
-    type Err = hex::FromHexError;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let bytes: [u8; 32] = hex::decode(s)?
-            .try_into()
-            .map_err(|_| hex::FromHexError::InvalidStringLength)?;
-
-        Ok(Self(bytes))
-    }
 }
 
 pub struct Fabric {
@@ -53,6 +31,10 @@ pub struct Fabric {
     trusted: Mutex<Option<TrustSet>>,
     /// The latest trust id observed from peers, if any.
     observed: Mutex<Option<TrustSet>>,
+    /// Trust anchor from a semi-trusted source (e.g. public explorer over HTTPS).
+    /// Removes the "unverified" badge but never shows the orange checkmark.
+    semi_trusted: Mutex<Option<TrustSet>>,
+    /// Whether to look for the latest zone from multiple peers
     prefer_latest: AtomicBool,
 }
 
@@ -63,6 +45,15 @@ pub struct RelayPool {
 pub struct RelayEntry {
     pub url: String,
     pub failures: u32,
+}
+
+enum TrustKind {
+    /// Fully trusted — user pinned explicitly.
+    Trusted(TrustId),
+    /// Semi-trusted — from an external source (e.g. public explorer).
+    SemiTrusted(TrustId),
+    /// Observed — latest from peers, no explicit trust.
+    Observed,
 }
 
 /// UI badge state derived from trust + sovereignty.
@@ -105,6 +96,7 @@ impl Fabric {
             seeds: seeds.iter().map(|s| s.to_string()).collect(),
             observed: Mutex::new(None),
             trusted: Mutex::new(None),
+            semi_trusted: Mutex::new(None),
             prefer_latest: AtomicBool::new(true),
         }
     }
@@ -120,7 +112,7 @@ impl Fabric {
             return false;
         };
         for root in roots {
-            if !trusted_set.roots.contains(&root.0) {
+            if !trusted_set.roots.contains(&root.to_bytes()) {
                 return false;
             }
         }
@@ -133,7 +125,20 @@ impl Fabric {
             return false;
         };
         for root in roots {
-            if !trusted_set.roots.contains(&root.0) {
+            if !trusted_set.roots.contains(&root.to_bytes()) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn are_roots_semi_trusted(&self, roots: &[TrustId]) -> bool {
+        let set = self.semi_trusted.lock().unwrap();
+        let Some(semi_set) = set.as_ref() else {
+            return false;
+        };
+        for root in roots {
+            if !semi_set.roots.contains(&root.to_bytes()) {
                 return false;
             }
         }
@@ -147,10 +152,11 @@ impl Fabric {
     pub fn badge_for(&self, sov: SovereigntyState, roots: &[TrustId]) -> VerificationBadge {
         let is_trusted = self.are_roots_trusted(roots);
         let is_observed = is_trusted || self.are_roots_observed(roots);
+        let is_semi_trusted = is_trusted || self.are_roots_semi_trusted(roots);
 
         if is_trusted && matches!(sov, SovereigntyState::Sovereign) {
             VerificationBadge::Orange
-        } else if is_observed && !is_trusted {
+        } else if is_observed && !is_trusted && !is_semi_trusted {
             VerificationBadge::Unverified
         } else {
             VerificationBadge::None
@@ -162,17 +168,38 @@ impl Fabric {
         if self.needs_peers() {
             self.bootstrap_peers().await?;
         }
-        self.update_anchors(Some(trust_id)).await
+        self.update_anchors(TrustKind::Trusted(trust_id)).await
+    }
+
+    /// Update observed trust id from peers
+    pub async fn observe(&self) -> Result<()> {
+        if self.needs_peers() {
+            self.bootstrap_peers().await?;
+        }
+        self.update_anchors(TrustKind::Observed).await
+    }
+
+    /// Set a semi-trusted anchor from an external source (e.g. public explorer).
+    pub async fn semi_trust(&self, trust_id: TrustId) -> Result<()> {
+        if self.needs_peers() {
+            self.bootstrap_peers().await?;
+        }
+        self.update_anchors(TrustKind::SemiTrusted(trust_id)).await
     }
 
     /// The trusted trust id, pinned explicitly with trust()
     pub fn trusted(&self) -> Option<TrustId> {
-        self.trusted.lock().unwrap().as_ref().map(|t| TrustId(t.id))
+        self.trusted.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
     }
 
     /// The latest trust id observed from peers, if any.
     pub fn observed(&self) -> Option<TrustId> {
-        self.observed.lock().unwrap().as_ref().map(|t| TrustId(t.id))
+        self.observed.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
+    }
+
+    /// The semi-trusted trust id, if any.
+    pub fn semi_trusted(&self) -> Option<TrustId> {
+        self.semi_trusted.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
     }
 
     /// Pin trust from a QR code payload (hex-encoded trust id).
@@ -191,26 +218,29 @@ impl Fabric {
         self.prefer_latest.store(latest, Ordering::Relaxed);
     }
 
-    async fn update_anchors(&self, trusted: Option<TrustId>) -> Result<()> {
-        let is_trusted = trusted.is_some();
-        let (id, peers) = if let Some(id) = trusted {
-            let peers =  self.pool.shuffled_urls_n(4);
-            (id, peers)
-        } else {
-            // fetches from bootstrap peers for untrusted for now
-           fetch_latest_trust_id(
-                &self.http,
-                &self.seeds
-            ).await?
+    async fn update_anchors(&self, kind: TrustKind) -> Result<()> {
+        let (id, peers) = match &kind {
+            TrustKind::Trusted(id) | TrustKind::SemiTrusted(id) => {
+                let peers = self.pool.shuffled_urls_n(4);
+                (*id, peers)
+            }
+            TrustKind::Observed => {
+                fetch_latest_trust_id(&self.http, &self.seeds).await?
+            }
         };
 
-        let ab = fetch_anchor_set(
-            &self.http, id, &peers).await?;
+        let ab = fetch_anchor_set(&self.http, id, &peers).await?;
 
         if let Ok(v) = Veritas::new().with_anchors(ab.anchors) {
             *self.veritas.lock().unwrap() = v;
-            if is_trusted {
-                *self.trusted.lock().unwrap() = Some(ab.trust_set.clone());
+            match kind {
+                TrustKind::Trusted(_) => {
+                    *self.trusted.lock().unwrap() = Some(ab.trust_set.clone());
+                }
+                TrustKind::SemiTrusted(_) => {
+                    *self.semi_trusted.lock().unwrap() = Some(ab.trust_set.clone());
+                }
+                TrustKind::Observed => {}
             }
             *self.observed.lock().unwrap() = Some(ab.trust_set);
         }
@@ -233,7 +263,7 @@ impl Fabric {
             self.bootstrap_peers().await?;
         }
         if self.needs_anchors() {
-            self.update_anchors(None).await?;
+            self.update_anchors(TrustKind::Observed).await?;
         }
         Ok(())
     }
@@ -310,7 +340,7 @@ impl Fabric {
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_zones.extend(verified.zones);
-            roots.push(TrustId(verified.root_id));
+            roots.push(TrustId::from(verified.root_id));
         }
 
         lookup.expand_zones(&mut all_zones);
@@ -880,7 +910,7 @@ async fn fetch_anchor_set(
             continue;
         }
 
-        let anchor_set: AnchorResponse = match resp.json().await {
+        let anchor_set: AnchorSet = match resp.json().await {
             Ok(a) => a,
             Err(e) => {
                 last_err = Some(Error::Decode(std::io::Error::new(
@@ -896,7 +926,7 @@ async fn fetch_anchor_set(
             anchors: anchor_set.entries,
         };
 
-        if TrustId(ab.trust_set.id) != trust_id {
+        if TrustId::from(ab.trust_set.id) != trust_id {
             last_err = Some(Error::Decode(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("GET {anchor_url}: anchor root mismatch"),

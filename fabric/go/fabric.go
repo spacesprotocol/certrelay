@@ -58,6 +58,14 @@ const (
 	BadgeNone       VerificationBadge = "none"
 )
 
+type trustKind int
+
+const (
+	trustKindObserved    trustKind = iota
+	trustKindTrusted
+	trustKindSemiTrusted
+)
+
 // Resolved wraps a single zone with its verification roots.
 type Resolved struct {
 	Zone  libveritas.Zone
@@ -77,6 +85,7 @@ type Fabric struct {
 	zoneCache    map[string]libveritas.Zone
 	seeds        []string
 	trusted      *libveritas.TrustSet
+	semiTrusted  *libveritas.TrustSet
 	observed     *libveritas.TrustSet
 	preferLatest bool
 	devMode      bool
@@ -116,7 +125,7 @@ func (f *Fabric) Trust(trustID string) error {
 			return err
 		}
 	}
-	return f.updateAnchors(trustID)
+	return f.updateAnchors(trustID, trustKindTrusted)
 }
 
 // TrustFromQr pins trust from a QR code payload (hex-encoded trust ID).
@@ -144,6 +153,26 @@ func (f *Fabric) Observed() string {
 	return hex.EncodeToString(f.observed.Id)
 }
 
+// SemiTrust sets a semi-trusted anchor from an external source (e.g. public explorer).
+func (f *Fabric) SemiTrust(trustID string) error {
+	if f.pool.IsEmpty() {
+		if err := f.bootstrapPeers(); err != nil {
+			return err
+		}
+	}
+	return f.updateAnchors(trustID, trustKindSemiTrusted)
+}
+
+// SemiTrusted returns the hex-encoded semi-trusted trust ID, or empty string if none.
+func (f *Fabric) SemiTrusted() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.semiTrusted == nil {
+		return ""
+	}
+	return hex.EncodeToString(f.semiTrusted.Id)
+}
+
 // ClearTrusted clears the pinned trusted state.
 func (f *Fabric) ClearTrusted() {
 	f.mu.Lock()
@@ -160,11 +189,12 @@ func (f *Fabric) Badge(resolved Resolved) VerificationBadge {
 func (f *Fabric) BadgeFor(sovereignty string, roots []string) VerificationBadge {
 	isTrusted := f.areRootsTrusted(roots)
 	isObserved := isTrusted || f.areRootsObserved(roots)
+	isSemiTrusted := isTrusted || f.areRootsSemiTrusted(roots)
 
 	if isTrusted && sovereignty == "sovereign" {
 		return BadgeOrange
 	}
-	if isObserved && !isTrusted {
+	if isObserved && !isTrusted && !isSemiTrusted {
 		return BadgeUnverified
 	}
 	return BadgeNone
@@ -206,6 +236,24 @@ func (f *Fabric) areRootsObserved(roots []string) bool {
 	return true
 }
 
+func (f *Fabric) areRootsSemiTrusted(roots []string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.semiTrusted == nil {
+		return false
+	}
+	for _, root := range roots {
+		rootBytes, err := hex.DecodeString(root)
+		if err != nil {
+			return false
+		}
+		if !containsRoot(f.semiTrusted.Roots, rootBytes) {
+			return false
+		}
+	}
+	return true
+}
+
 func containsRoot(roots [][]byte, target []byte) bool {
 	for _, r := range roots {
 		if bytes.Equal(r, target) {
@@ -223,7 +271,7 @@ func (f *Fabric) Bootstrap() error {
 		}
 	}
 	if f.veritas == nil || f.veritas.NewestAnchor() == 0 {
-		return f.updateAnchors("")
+		return f.updateAnchors("", trustKindObserved)
 	}
 	return nil
 }
@@ -249,12 +297,11 @@ func (f *Fabric) bootstrapPeers() error {
 	return nil
 }
 
-func (f *Fabric) updateAnchors(trustID string) error {
-	isTrusted := trustID != ""
+func (f *Fabric) updateAnchors(trustID string, kind trustKind) error {
 	var hash string
 	var peers []string
 
-	if isTrusted {
+	if kind == trustKindTrusted || kind == trustKindSemiTrusted {
 		hash = trustID
 		peers = f.pool.ShuffledURLs(4)
 	} else {
@@ -283,8 +330,12 @@ func (f *Fabric) updateAnchors(trustID string) error {
 
 	f.mu.Lock()
 	f.veritas = v
-	if isTrusted {
+	switch kind {
+	case trustKindTrusted:
 		f.trusted = &ts
+	case trustKindSemiTrusted:
+		f.semiTrusted = &ts
+	default:
 	}
 	f.observed = &ts
 	f.mu.Unlock()

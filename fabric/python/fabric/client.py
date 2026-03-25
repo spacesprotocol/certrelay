@@ -79,6 +79,12 @@ class _QueryRequest:
         ).encode()
 
 
+class _TrustKind:
+    TRUSTED = "trusted"
+    SEMI_TRUSTED = "semi_trusted"
+    OBSERVED = "observed"
+
+
 class Fabric:
     def __init__(
         self,
@@ -94,6 +100,7 @@ class Fabric:
         self._veritas: Optional[lv.Veritas] = None
         self._trusted: Optional[lv.TrustSet] = None
         self._observed: Optional[lv.TrustSet] = None
+        self._semi_trusted: Optional[lv.TrustSet] = None
         self._zone_cache: dict[str, lv.Zone] = {}
         self._lock = threading.Lock()
 
@@ -114,7 +121,7 @@ class Fabric:
         Bootstraps peers if needed, then fetches the anchor set for this ID."""
         if self._pool.is_empty():
             self._bootstrap_peers()
-        self._update_anchors(trust_id)
+        self._update_anchors(trust_id, _TrustKind.TRUSTED)
 
     def trust_from_qr(self, payload: str) -> None:
         """Pin trust from a QR code payload (hex-encoded trust ID)."""
@@ -130,6 +137,17 @@ class Fabric:
         ts = self._observed
         return bytes(ts.id).hex() if ts else None
 
+    def semi_trust(self, trust_id: str) -> None:
+        """Set a semi-trusted anchor from an external source (e.g. public explorer)."""
+        if self._pool.is_empty():
+            self._bootstrap_peers()
+        self._update_anchors(trust_id, _TrustKind.SEMI_TRUSTED)
+
+    def semi_trusted(self) -> Optional[str]:
+        """Return the hex-encoded semi-trusted trust ID, or None if not set."""
+        ts = self._semi_trusted
+        return bytes(ts.id).hex() if ts else None
+
     def clear_trusted(self) -> None:
         """Clear the pinned trusted state."""
         self._trusted = None
@@ -142,9 +160,10 @@ class Fabric:
         """Return the verification badge given sovereignty and root IDs."""
         is_trusted = self._are_roots_trusted(roots)
         is_observed = is_trusted or self._are_roots_observed(roots)
+        is_semi_trusted = is_trusted or self._are_roots_semi_trusted(roots)
         if is_trusted and sovereignty == "sovereign":
             return BADGE_ORANGE
-        if is_observed and not is_trusted:
+        if is_observed and not is_trusted and not is_semi_trusted:
             return BADGE_UNVERIFIED
         return BADGE_NONE
 
@@ -287,6 +306,15 @@ class Fabric:
             for root in roots
         )
 
+    def _are_roots_semi_trusted(self, roots: list[str]) -> bool:
+        ts = self._semi_trusted
+        if ts is None:
+            return False
+        return all(
+            any(bytes(r) == bytes.fromhex(root) for r in ts.roots)
+            for root in roots
+        )
+
     def _bootstrap_peers(self):
         urls: set[str] = set()
         for seed in self._seeds:
@@ -300,9 +328,11 @@ class Fabric:
             raise FabricError("no_peers", "no peers available")
         self._pool.refresh(list(urls))
 
-    def _update_anchors(self, trust_id: Optional[str] = None):
-        is_trusted = trust_id is not None and trust_id != ""
-        if is_trusted:
+    def _update_anchors(self, trust_id: Optional[str] = None, kind: str = ""):
+        if not kind:
+            kind = _TrustKind.TRUSTED if (trust_id is not None and trust_id != "") else _TrustKind.OBSERVED
+
+        if kind == _TrustKind.TRUSTED or kind == _TrustKind.SEMI_TRUSTED:
             anchor_hash = trust_id
             peers = self._pool.shuffled_urls(4)
         else:
@@ -317,8 +347,10 @@ class Fabric:
 
         with self._lock:
             self._veritas = v
-            if is_trusted:
+            if kind == _TrustKind.TRUSTED:
                 self._trusted = trust_set
+            elif kind == _TrustKind.SEMI_TRUSTED:
+                self._semi_trusted = trust_set
             self._observed = trust_set
 
     def _resolve_flat(self, handles: list[str]) -> lv.VerifiedMessage:
