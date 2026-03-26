@@ -215,12 +215,23 @@ impl Handler {
             }
         }
 
+        // Max offchain records size per handle (1 KB)
+        const MAX_RECORDS_SIZE: usize = 1024;
+
         // Bundle each certificate with its zone and epoch height
         let updates: Vec<HandleRecord> = res
             .certificates()
             .filter_map(|cert| {
                 let handle_str = cert.subject.to_string();
                 let zone = zone_map.get(&handle_str)?;
+
+                if let Some(ref records) = zone.records {
+                    if records.as_slice().len() > MAX_RECORDS_SIZE {
+                        tracing::warn!("{}: records exceed {} bytes, skipping", handle_str, MAX_RECORDS_SIZE);
+                        return None;
+                    }
+                }
+
                 let space = cert.subject.space()?.to_string();
                 let epoch_height = epoch_map.get(&space).copied().unwrap_or(0);
                 let offchain_seq = zone.records.as_ref().and_then(|r| r.seq()).unwrap_or(0);
