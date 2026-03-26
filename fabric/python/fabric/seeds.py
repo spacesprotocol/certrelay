@@ -1,1 +1,1 @@
-DEFAULT_SEEDS = ["https://certrelay.atbitcoin.com"]
+DEFAULT_SEEDS = ["https://relay-cosmos.spacesprotocol.org", "https://relay-atlas.spacesprotocol.org"]
