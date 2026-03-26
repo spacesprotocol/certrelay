@@ -1,3 +1,6 @@
+use std::num::NonZeroU32;
+use governor::DefaultKeyedRateLimiter;
+use governor::Quota;
 use libveritas::cert::{Witness};
 use libveritas::msg::{self, QueryContext};
 use libveritas::sname::{Label, NameLike, SName};
@@ -6,6 +9,7 @@ use spaces_protocol::slabel::SLabel;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use libveritas::builder::{DataUpdateRequest, MessageBuilder};
 use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorSets;
@@ -18,6 +22,12 @@ pub struct Handler {
     pub anchor_store: Mutex<AnchorSets>,
     pub store: SqliteStore,
     pub dev_mode: bool,
+    /// Rate limiter per space: 100 handle updates per minute.
+    space_rate: DefaultKeyedRateLimiter<String>,
+    /// Rate limiter per handle: 1 update per 5 minutes.
+    handle_rate: DefaultKeyedRateLimiter<String>,
+    /// Counter for periodic rate limiter cleanup.
+    msg_count: AtomicU64,
 }
 
 impl Handler {
@@ -27,6 +37,15 @@ impl Handler {
             anchor_store: Mutex::new(anchor_store),
             store,
             dev_mode: false,
+            space_rate: governor::RateLimiter::keyed(
+                Quota::per_minute(NonZeroU32::new(100).unwrap()),
+            ),
+            handle_rate: governor::RateLimiter::keyed(
+                Quota::with_period(std::time::Duration::from_secs(300))
+                    .unwrap()
+                    .allow_burst(NonZeroU32::new(1).unwrap()),
+            ),
+            msg_count: AtomicU64::new(0),
         }
     }
 
@@ -162,6 +181,14 @@ impl Handler {
     /// Verifies the message against the current chain state, updates stored zones,
     /// and stores any new handle records.
     pub fn handle_message(&self, msg: msg::Message) -> anyhow::Result<()> {
+        // Periodically clean up expired rate limiter entries
+        if self.msg_count.fetch_add(1, Ordering::Relaxed) % 10_000 == 0 {
+            self.space_rate.retain_recent();
+            self.handle_rate.retain_recent();
+            self.space_rate.shrink_to_fit();
+            self.handle_rate.shrink_to_fit();
+        }
+
         // Build query context from stored zones
         let mut ctx = QueryContext::new();
         let spaces: Vec<&SLabel> = msg.spaces.iter().map(|s| &s.subject).collect();
@@ -233,6 +260,16 @@ impl Handler {
                 }
 
                 let space = cert.subject.space()?.to_string();
+
+                // Rate limit per space (100 handle updates/min) and per handle (1 per 5 min)
+                if self.space_rate.check_key(&space).is_err() {
+                    tracing::warn!("{}: space rate limited, skipping", space);
+                    return None;
+                }
+                if self.handle_rate.check_key(&handle_str).is_err() {
+                    tracing::warn!("{}: handle rate limited, skipping", handle_str);
+                    return None;
+                }
                 let epoch_height = epoch_map.get(&space).copied().unwrap_or(0);
                 let offchain_seq = zone.records.as_ref().and_then(|r| r.seq()).unwrap_or(0);
                 let delegate_offchain_seq = match &zone.delegate {
