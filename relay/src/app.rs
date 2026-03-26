@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use spacedb::Configuration;
+use spacedb::tx::HashIndex;
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
-use spaces_checkpoint::{needs_checkpoint, fetch_latest, ensure_checkpoint, integrity, CHECKPOINT_BASE_URL};
+use spaces_checkpoint::{needs_checkpoint, fetch_latest, ensure_checkpoint, integrity, CHECKPOINT_BASE_URL, CHECKPOINT_FILES};
 use crate::{bootstrap, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner};
 use crate::anchor::AnchorSets;
 
@@ -109,7 +111,10 @@ pub async fn run(
                 let url = checkpoint.url(CHECKPOINT_BASE_URL);
 
                 match ensure_checkpoint(&spaced_dir, &url, &digest, None) {
-                    Ok(true) => tracing::info!("checkpoint applied"),
+                    Ok(true) => {
+                        tracing::info!("checkpoint applied");
+                        build_hash_indexes_for_checkpoint(spaced_dir)?;
+                    }
                     Ok(false) => {
                         anyhow::bail!(
                             "could not download checkpoint. \
@@ -202,5 +207,41 @@ async fn refresh_anchors(state: &AppState) -> anyhow::Result<()> {
     let new_veritas = create_relay_veritas(anchors)?;
     *state.handler.veritas.lock().unwrap() = new_veritas;
     *state.handler.anchor_store.lock().unwrap() = anchor_store;
+    Ok(())
+}
+
+pub fn build_hash_indexes_for_checkpoint(spaces_dir: PathBuf) -> anyhow::Result<()> {
+    for file in CHECKPOINT_FILES {
+        if !file.ends_with(".sdb") {
+            continue;
+        }
+        let path = spaces_dir.join(file);
+        let Some(db_path) = path.to_str() else {
+            continue
+        };
+        build_hash_indexes_for_snapshots(db_path)?;
+    }
+
+    Ok(())
+}
+
+pub fn build_hash_indexes_for_snapshots(db_path: &str) -> anyhow::Result<()> {
+    tracing::info!("building hash indexes for snapshots ....");
+    let db = spacedb::db::Database::open_with_config(
+        db_path,
+        Configuration::standard()
+            .with_cache_size(500_000_000 /* 500 MB */)
+    )?;
+
+    for (num, snapshot) in db.iter().enumerate() {
+        let mut snapshot = snapshot?;
+        snapshot.build_hash_index()?;
+        if num >= ROOT_ANCHORS_COUNT as _ {
+            break;
+        }
+        tracing::info!("hash index built for snapshot {}", num);
+    }
+
+    tracing::info!("hash indexes built successfully");
     Ok(())
 }
