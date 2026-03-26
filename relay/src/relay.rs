@@ -286,6 +286,7 @@ impl ServiceRunner {
             "--bitcoin-rpc-light".into(),
             "--num-anchors".into(), (ROOT_ANCHORS_COUNT * 2).to_string(),
             "--index-node-hashes".into(),
+            "--enable-pruning".into(),
         ]
     }
 
