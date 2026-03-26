@@ -35,7 +35,7 @@ pub type IpRateLimiter = RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultC
 pub struct RateLimitConfig {
     /// Quota for /message endpoint
     pub message: Quota,
-    /// Quota for /query endpoint
+    /// Quota for /query and /chain-proof endpoints (both trigger proof generation)
     pub query: Quota,
     /// Quota for /announce endpoint
     pub announce: Quota,
@@ -227,8 +227,8 @@ async fn handle_announce(
         }
     };
 
-    if announcement.url.is_empty() {
-        return (StatusCode::BAD_REQUEST, "empty url");
+    if announcement.url.is_empty() || announcement.url.len() > 256 {
+        return (StatusCode::BAD_REQUEST, "invalid url");
     }
 
     let peer = PeerInfo {
@@ -293,6 +293,15 @@ async fn handle_query(
         }
     };
 
+    // Limit total handles across all queries
+    const MAX_HANDLES: usize = 6;
+    let total_handles: usize = request.queries.iter()
+        .map(|q| 1 + q.handles.len()) // 1 for the space itself
+        .sum();
+    if total_handles > MAX_HANDLES {
+        return (StatusCode::BAD_REQUEST, "too many handles (max 6)".as_bytes().to_vec()).into_response();
+    }
+
     // Resolve the queries - response is binary (borsh-encoded Message)
     match state.handler.resolve(&state.chain, request.queries).await {
         Ok(msg) => (StatusCode::OK, msg.to_bytes()).into_response(),
@@ -312,8 +321,15 @@ async fn handle_query(
 /// anchor set. Clients can use HEAD to cheaply compare across peers.
 async fn handle_anchors(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let ip = client_ip(&addr, &headers, &state.remote_ip_header);
+    if state.limiters.peers.check_key(&ip).is_err() {
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
+    }
+
     let store = state.handler.anchor_store.lock().unwrap();
 
     let mut headers = HeaderMap::new();
@@ -370,6 +386,10 @@ async fn handle_hints(
 
     let mut handles: Vec<&str> = q.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
+    if handles.len() > 6 {
+        return (StatusCode::BAD_REQUEST, "too many handles (max 6)").into_response();
+    }
+
     match state.handler.hints(&mut handles) {
         Ok(res) => axum::Json(res).into_response(),
         Err(e) => {
@@ -402,6 +422,13 @@ async fn handle_chain_proof(
             return (StatusCode::BAD_REQUEST, vec![]).into_response();
         }
     };
+
+    if request.spaces.len() > 6 {
+        return (StatusCode::BAD_REQUEST, "too many spaces (max 6)".as_bytes().to_vec()).into_response();
+    }
+    if request.nums.len() > 20 {
+        return (StatusCode::BAD_REQUEST, "too many nums (max 20)".as_bytes().to_vec()).into_response();
+    }
 
     match state.chain.prove(&request).await {
         Ok(proof) => (StatusCode::OK, proof.to_bytes()).into_response(),
