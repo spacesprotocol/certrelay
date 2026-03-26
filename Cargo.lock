@@ -2006,7 +2006,7 @@ dependencies = [
 [[package]]
 name = "libveritas"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#def14dba9bf499d0bcbf218a6a68ea60c96bbfca"
+source = "git+https://github.com/spacesprotocol/libveritas.git#ce58be0c262bc775cfa41349bba720c8fe69a4c5"
 dependencies = [
  "base64 0.22.1",
  "borsh",
@@ -2024,7 +2024,7 @@ dependencies = [
 [[package]]
 name = "libveritas_testutil"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#def14dba9bf499d0bcbf218a6a68ea60c96bbfca"
+source = "git+https://github.com/spacesprotocol/libveritas.git#ce58be0c262bc775cfa41349bba720c8fe69a4c5"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -2042,7 +2042,7 @@ dependencies = [
 [[package]]
 name = "libveritas_zk"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#def14dba9bf499d0bcbf218a6a68ea60c96bbfca"
+source = "git+https://github.com/spacesprotocol/libveritas.git#ce58be0c262bc775cfa41349bba720c8fe69a4c5"
 dependencies = [
  "borsh",
  "serde",
