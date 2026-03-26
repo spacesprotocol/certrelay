@@ -14,7 +14,8 @@ resolver = { path = "../fabric/rust", package = "fabric", default-features = fal
 spaces_protocol = { workspace = true }
 spaces_client = { workspace = true }
 spaces_nums = { workspace = true }
-spacedb = { git = "https://github.com/spacesprotocol/spacedb.git", version = "0.0.12" }
+spaces_checkpoint = { workspace = true}
+spacedb = { workspace = true }
 governor = "0.8"
 anyhow = "1.0"
 axum = { version = "0.8", features = ["json"] }

@@ -9,3 +9,5 @@ libveritas_testutil = { git = "https://github.com/spacesprotocol/libveritas.git"
 spaces_client = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
 spaces_protocol = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
 spaces_nums = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
+spaces_checkpoint = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
+spacedb = { git = "https://github.com/spacesprotocol/spacedb.git", features = ["hash-idx"] }
