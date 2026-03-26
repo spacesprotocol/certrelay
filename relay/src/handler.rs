@@ -49,7 +49,16 @@ impl Handler {
             // Load root handle (has zone + parent cert)
             let parent = match self.store.get_handle(&query.space)? {
                 Some(record) => record,
-                None => continue,
+                None => {
+                    builder.add_cert(libveritas::cert::Certificate {
+                        version: 0,
+                        subject:  SName::from_space(&space),
+                        witness: Witness::Root {
+                            receipt: None,
+                        },
+                    });
+                    continue;
+                },
             };
             let parent_records = parent.records();
             let parent_delegate_records = parent.delegate_records();
