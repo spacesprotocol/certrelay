@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
+use spaces_checkpoint::{needs_checkpoint, fetch_latest, ensure_checkpoint, integrity, CHECKPOINT_BASE_URL};
 use crate::{bootstrap, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner};
 use crate::anchor::AnchorSets;
 
@@ -24,9 +25,9 @@ struct Args {
     #[arg(long, default_value = "127.0.0.1", env = "CERTRELAY_BIND")]
     bind: String,
 
-    /// Listen port for the relay HTTP server
-    #[arg(long, default_value = "7779", env = "CERTRELAY_PORT")]
-    port: u16,
+    /// Listen port for the relay HTTP server (default: 7778 for mainnet, 7779 otherwise)
+    #[arg(long, env = "CERTRELAY_PORT")]
+    port: Option<u16>,
 
     /// Public URL for peer announcements
     #[arg(long, env = "CERTRELAY_SELF_URL")]
@@ -44,6 +45,10 @@ struct Args {
     /// Anchor refresh interval in seconds (default: 1800 = 30 minutes)
     #[arg(long, default_value = "1800", env = "CERTRELAY_ANCHOR_REFRESH")]
     anchor_refresh: u64,
+
+    /// Skip downloading a checkpoint and sync from scratch
+    #[arg(long)]
+    skip_checkpoint_sync: bool,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -61,9 +66,72 @@ pub async fn run(
     let data_dir = args.data_dir.unwrap_or_else(default_data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
+
+
     // Start embedded yuki + spaced if no external spaced URL was provided
     if args.spaced_rpc_url.is_none() {
-        let runner = ServiceRunner::new(data_dir.clone(), args.chain, shutdown.clone());
+        let yuki_checkpoint_file = data_dir.join("yuki_checkpoint");
+        let mut yuki_checkpoint = None;
+
+        // Reuse the checkpoint from a previous run if it exists
+        if let Ok(saved) = std::fs::read_to_string(&yuki_checkpoint_file) {
+            let saved = saved.trim().to_string();
+            if !saved.is_empty() {
+                yuki_checkpoint = Some(saved);
+            }
+        }
+
+        if yuki_checkpoint.is_none() && args.chain == ExtendedNetwork::Mainnet {
+            let a = spaces_protocol::constants::ChainAnchor::MAINNET();
+            yuki_checkpoint = Some(format!("{}:{}", a.hash, a.height));
+        }
+
+        // Download a checkpoint so spaced can sync quickly (mainnet only)
+        if args.chain == ExtendedNetwork::Mainnet && !args.skip_checkpoint_sync {
+            let spaced_dir = data_dir.join("spaced").join("mainnet");
+            if needs_checkpoint(&spaced_dir) {
+                let default = integrity::checkpoint();
+                let checkpoint = match fetch_latest(CHECKPOINT_BASE_URL) {
+                    Ok(Some(latest)) if latest.height > default.height => latest,
+                    Ok(_) => default,
+                    Err(e) => {
+                        anyhow::bail!(
+                            "could not fetch checkpoint info: {e}. \
+                            Please try again or use --skip-checkpoint-sync to sync from scratch"
+                        );
+                    }
+                };
+
+                yuki_checkpoint = Some(checkpoint.block_id());
+
+                let digest = checkpoint.digest_bytes()
+                    .map_err(|e| anyhow::anyhow!("invalid checkpoint digest: {e}"))?;
+                let url = checkpoint.url(CHECKPOINT_BASE_URL);
+
+                match ensure_checkpoint(&spaced_dir, &url, &digest, None) {
+                    Ok(true) => tracing::info!("checkpoint applied"),
+                    Ok(false) => {
+                        anyhow::bail!(
+                            "could not download checkpoint. \
+                            Please try again or use --skip-checkpoint-sync to sync from scratch"
+                        );
+                    }
+                    Err(e) => {
+                        anyhow::bail!(
+                            "checkpoint error: {e}. \
+                            Please try again or use --skip-checkpoint-sync to sync from scratch"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Persist the checkpoint for consistent yuki restarts
+        if let Some(ref cp) = yuki_checkpoint {
+            let _ = std::fs::write(&yuki_checkpoint_file, cp);
+        }
+
+        let runner = ServiceRunner::new(data_dir.clone(), args.chain, yuki_checkpoint, shutdown.clone());
         tracing::info!(
             "starting embedded services (yuki + spaced) for {}",
             args.chain
@@ -109,7 +177,11 @@ pub async fn run(
         }
     });
 
-    let bind_addr = format!("{}:{}", args.bind, args.port);
+    let port = args.port.unwrap_or(match args.chain {
+        ExtendedNetwork::Mainnet => 7778,
+        _ => 7779,
+    });
+    let bind_addr = format!("{}:{}", args.bind, port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("relay listening on {}", listener.local_addr()?);
 

@@ -154,6 +154,7 @@ impl Relay {
 pub struct ServiceRunner {
     data_dir: PathBuf,
     network: ExtendedNetwork,
+    yuki_checkpoint: Option<String>,
     shutdown: tokio::sync::broadcast::Sender<()>,
 }
 
@@ -161,9 +162,10 @@ impl ServiceRunner {
     pub fn new(
         data_dir: PathBuf,
         network: ExtendedNetwork,
+        yuki_checkpoint: Option<String>,
         shutdown: tokio::sync::broadcast::Sender<()>,
     ) -> Self {
-        Self { data_dir, network, shutdown }
+        Self { data_dir, network, yuki_checkpoint, shutdown }
     }
 
     /// Start yuki and spaced in dedicated threads with their own tokio runtimes.
@@ -261,12 +263,17 @@ impl ServiceRunner {
     }
 
     fn yuki_args(&self) -> Vec<String> {
-        vec![
+        let mut args = vec![
             "yuki".into(),
             "--chain".into(), self.network.to_string(),
             "--rpc-port".into(), Self::yuki_port(self.network).to_string(),
             "--data-dir".into(), self.data_dir.join("yuki").to_str().unwrap().to_string(),
-        ]
+        ];
+        if let Some(cp) = &self.yuki_checkpoint {
+            args.push("--checkpoint".into());
+            args.push(cp.to_string());
+        }
+        args
     }
 
     fn spaced_args(&self) -> Vec<String> {
