@@ -208,7 +208,8 @@ pub async fn run(
             loop {
                 interval.tick().await;
                 let candidate = {
-                    let peers = state.peers.lock().await;
+                    let mut peers = state.peers.lock().await;
+                    peers.demote_expired();
                     if !peers.needs_peers() {
                         continue;
                     }

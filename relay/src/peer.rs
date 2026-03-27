@@ -239,11 +239,15 @@ impl PeerTable {
         active < self.config.max_verified / 2
     }
 
-    /// Prune stale verified peers.
-    pub fn prune(&mut self) {
-        let cutoff = self.config.verified_ttl * 2;
-        self.verified
-            .retain(|_, e| Instant::now().duration_since(e.last_seen) < cutoff);
+    /// Move expired verified peers back to unverified so they can be re-checked.
+    pub fn demote_expired(&mut self) {
+        let now = Instant::now();
+        let expired: Vec<(String, PeerEntry)> = self.verified
+            .extract_if(|_, e| now.duration_since(e.last_seen) >= self.config.verified_ttl)
+            .collect();
+        for (url, entry) in expired {
+            self.unverified.entry(url).or_insert(entry);
+        }
     }
 
     pub fn verified_count(&self) -> usize {
