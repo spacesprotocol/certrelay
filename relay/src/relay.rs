@@ -155,6 +155,7 @@ pub struct ServiceRunner {
     data_dir: PathBuf,
     network: ExtendedNetwork,
     yuki_checkpoint: Option<String>,
+    rpc_password: String,
     shutdown: tokio::sync::broadcast::Sender<()>,
 }
 
@@ -165,7 +166,13 @@ impl ServiceRunner {
         yuki_checkpoint: Option<String>,
         shutdown: tokio::sync::broadcast::Sender<()>,
     ) -> Self {
-        Self { data_dir, network, yuki_checkpoint, shutdown }
+        use rand::Rng;
+        let rpc_password: String = rand::rng()
+            .sample_iter(&rand::distr::Alphanumeric)
+            .take(64)
+            .map(char::from)
+            .collect();
+        Self { data_dir, network, yuki_checkpoint, rpc_password, shutdown }
     }
 
     /// Start yuki and spaced in dedicated threads with their own tokio runtimes.
@@ -231,6 +238,11 @@ impl ServiceRunner {
         format!("http://127.0.0.1:{}", Self::spaced_port(network))
     }
 
+    /// Spaced URL with embedded auth credentials.
+    pub fn spaced_url_with_auth(&self) -> String {
+        format!("http://__cookie__:{}@127.0.0.1:{}", self.rpc_password, Self::spaced_port(self.network))
+    }
+
     /// Path to the cookie file spaced will write for RPC auth.
     pub fn spaced_cookie(&self) -> PathBuf {
         self.spaced_data_dir()
@@ -287,6 +299,8 @@ impl ServiceRunner {
             "--num-anchors".into(), (ROOT_ANCHORS_COUNT * 2).to_string(),
             "--index-node-hashes".into(),
             "--enable-pruning".into(),
+            "--rpc-user".into(), "__cookie__".into(),
+            "--rpc-password".into(), self.rpc_password.clone(),
         ]
     }
 

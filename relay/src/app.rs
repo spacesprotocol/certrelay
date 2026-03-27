@@ -70,7 +70,8 @@ pub async fn run(
 
 
     // Start embedded yuki + spaced if no external spaced URL was provided
-    if args.spaced_rpc_url.is_none() {
+    let mut spaced_url = args.spaced_rpc_url;
+    if spaced_url.is_none() {
         let yuki_checkpoint_file = data_dir.join("yuki_checkpoint");
         let mut yuki_checkpoint = None;
 
@@ -136,6 +137,7 @@ pub async fn run(
         }
 
         let runner = ServiceRunner::new(data_dir.clone(), args.chain, yuki_checkpoint, shutdown.clone());
+        let spaced_auth_url = runner.spaced_url_with_auth();
         tracing::info!(
             "starting embedded services (yuki + spaced) for {}",
             args.chain
@@ -151,10 +153,13 @@ pub async fn run(
                     }
                 }
             })?;
+
+        // Use the authenticated URL for the embedded spaced
+        spaced_url = Some(spaced_auth_url);
     }
 
     let mut config = Config::new(data_dir, args.chain);
-    config.spaced_url = args.spaced_rpc_url;
+    config.spaced_url = spaced_url;
     config.is_bootstrap = args.is_bootstrap;
     config.self_url = args.self_url;
     config.remote_ip_header = args.remote_ip_header;
