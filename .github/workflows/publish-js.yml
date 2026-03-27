@@ -32,12 +32,18 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Set package versions
+      - name: Set package versions and pin workspace deps
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version -w fabric-core
           npm version "$VERSION" --no-git-tag-version -w fabric-web
           npm version "$VERSION" --no-git-tag-version -w fabric-react-native
+
+          # Replace "*" references to sibling packages with the actual version
+          for pkg in fabric-web/package.json fabric-react-native/package.json; do
+            sed -i "s|\"@spacesprotocol/fabric-core\": \"\\*\"|\"@spacesprotocol/fabric-core\": \"$VERSION\"|g" "$pkg"
+            sed -i "s|\"@spacesprotocol/react-native-libveritas\": \"\\*\"|\"@spacesprotocol/react-native-libveritas\": \"$VERSION\"|g" "$pkg"
+          done
 
       - run: npm install
 
