@@ -78,7 +78,8 @@ pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 512 * 1024;
 
 /// Default bootstrap relay URLs.
 pub const BOOTSTRAP_RELAYS: &[&str] = &[
-    // TODO: Add production bootstrap relay URLs
+    "https://relay-cosmos.spacesprotocol.org",
+    "https://relay-atlas.spacesprotocol.org",
 ];
 
 /// Shared application state.
