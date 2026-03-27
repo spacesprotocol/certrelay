@@ -4552,7 +4552,7 @@ dependencies = [
 [[package]]
 name = "yuki"
 version = "0.0.1"
-source = "git+https://github.com/imperviousinc/yuki.git#a90ee8a9ef09629b84cd61d1458c9c6544977ebb"
+source = "git+https://github.com/imperviousinc/yuki.git#f638494a20f13ff87bfa1d962ee1d5586957483a"
 dependencies = [
  "anyhow",
  "bincode",
