@@ -44,7 +44,7 @@ struct Args {
     remote_ip_header: Option<String>,
 
     /// Anchor refresh interval in seconds (default: 1800 = 30 minutes)
-    #[arg(long, default_value = "1800", env = "CERTRELAY_ANCHOR_REFRESH")]
+    #[arg(long, default_value = "300", env = "CERTRELAY_ANCHOR_REFRESH")]
     anchor_refresh: u64,
 
     /// Skip downloading a checkpoint and sync from scratch
@@ -175,6 +175,20 @@ pub async fn run(
         let state = relay.state().clone();
         let refresh_secs = args.anchor_refresh;
         async move {
+            // Retry quickly on startup until spaced is ready
+            loop {
+                match refresh_anchors(&state).await {
+                    Ok(()) => {
+                        tracing::info!("initial anchor refresh succeeded");
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!("waiting for spaced: {e}");
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                }
+            }
+            // Then refresh on the regular interval
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
             loop {
                 interval.tick().await;
