@@ -200,6 +200,37 @@ pub async fn run(
         }
     });
 
+    // Periodically verify unverified peers when we need more verified ones
+    tokio::spawn({
+        let state = relay.state().clone();
+        async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let candidate = {
+                    let peers = state.peers.lock().await;
+                    if !peers.needs_peers() {
+                        continue;
+                    }
+                    peers.next_candidate().map(|s| s.to_string())
+                };
+                if let Some(url) = candidate {
+                    let check_url = format!("{}/peers", url);
+                    match state.http_client.head(&check_url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            let mut peers = state.peers.lock().await;
+                            peers.mark_alive(&url);
+                            tracing::debug!("verified peer: {}", url);
+                        }
+                        _ => {
+                            tracing::debug!("peer health check failed: {}", url);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     let port = args.port.unwrap_or(match args.chain {
         ExtendedNetwork::Mainnet => 7778,
         _ => 7779,
