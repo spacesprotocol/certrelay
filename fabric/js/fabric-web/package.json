@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@spacesprotocol/fabric-core": "*",
-    "@spacesprotocol/libveritas": "0.0.0-dev.20260326194504"
+    "@spacesprotocol/libveritas": "0.0.0-dev.20260327154336"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
