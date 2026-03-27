@@ -272,23 +272,20 @@ Relays form a gossip network. New relays announce themselves via `POST /announce
 
 This allows clients to fall back to alternative relays if one is unavailable.
 
-## Deployment
-
-### Building
+## Running a relay
 
 ```bash
-cargo build --release
-```
-
-The binary is at `target/release/certrelay`. It embeds a [yuki](https://github.com/imperviousinc/yuki) Bitcoin light client and a [spaced](https://github.com/spacesprotocol/spaces) node, so no external Bitcoin or Spaces node is required.
-
-### Running a relay
-
-```bash
+cargo install --git https://github.com/spacesprotocol/certrelay.git --bin certrelay
 certrelay
 ```
 
-This starts the relay with default settings: listens on `127.0.0.1:7779`, stores data in `~/.certrelay`, connects to mainnet, and bootstraps from hardcoded seed relays.
+That's it. On first run, certrelay will:
+1. Download a checkpoint so it can sync quickly (~8MB)
+2. Build hash indexes (~2 min)
+3. Start an embedded Bitcoin light client ([yuki](https://github.com/imperviousinc/yuki)) and [spaced](https://github.com/spacesprotocol/spaces) node
+4. Sync to the chain tip and start serving
+
+No external Bitcoin node or Spaces node required. Data is stored in `~/.certrelay` by default.
 
 ### Configuration
 
@@ -297,20 +294,21 @@ All options can be set via CLI flags or environment variables:
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
 | `--chain` | `CERTRELAY_CHAIN` | `mainnet` | Network (`mainnet`, `testnet4`) |
-| `--data-dir` | `CERTRELAY_DATA_DIR` | `~/.certrelay` | Data directory for SQLite, yuki, and spaced |
+| `--data-dir` | `CERTRELAY_DATA_DIR` | `~/.certrelay` | Data directory |
 | `--bind` | `CERTRELAY_BIND` | `127.0.0.1` | Bind address |
-| `--port` | `CERTRELAY_PORT` | `7779` | Listen port |
+| `--port` | `CERTRELAY_PORT` | `7778` (mainnet) / `7779` (other) | Listen port |
 | `--self-url` | `CERTRELAY_SELF_URL` | - | Public URL for peer announcements |
-| `--spaced-rpc-url` | `CERTRELAY_SPACED_RPC_URL` | - | External spaced RPC URL (skips embedded node) |
-| `--remote-ip-header` | `CERTRELAY_REMOTE_IP_HEADER` | - | Header for client IP behind a reverse proxy |
+| `--spaced-rpc-url` | `CERTRELAY_SPACED_RPC_URL` | - | External spaced RPC (skips embedded node) |
+| `--remote-ip-header` | `CERTRELAY_REMOTE_IP_HEADER` | - | Header for client IP behind reverse proxy |
 | `--is-bootstrap` | `CERTRELAY_BOOTSTRAP` | `false` | Run as a bootstrap node |
+| `--skip-checkpoint-sync` | - | `false` | Skip checkpoint download, sync from scratch |
+| `--anchor-refresh` | `CERTRELAY_ANCHOR_REFRESH` | `300` | Anchor refresh interval in seconds |
 
-### Example: public relay behind nginx
+### Public relay behind a reverse proxy
 
 ```bash
 certrelay \
   --bind 0.0.0.0 \
-  --port 7779 \
   --self-url https://relay.example.com \
   --remote-ip-header x-forwarded-for
 ```
@@ -320,46 +318,5 @@ certrelay \
 If you already run a spaced node, point certrelay at it to skip the embedded light client:
 
 ```bash
-certrelay --spaced-rpc-url http://127.0.0.1:12888
-```
-
-### Setting up a bootstrap node
-
-Bootstrap nodes are the initial entry points for new relays and clients joining the network. They don't bootstrap from others - instead, other nodes bootstrap from them.
-
-```bash
-certrelay \
-  --is-bootstrap \
-  --self-url https://bootstrap.example.com \
-  --bind 0.0.0.0 \
-  --remote-ip-header cf-connecting-ip
-```
-
-When `--is-bootstrap` is set, the relay:
-- Skips bootstrapping from other relays on startup
-- Serves as a peer discovery endpoint for new nodes
-- Still participates in normal gossip and message relay
-
-Other relays discover bootstrap nodes through the hardcoded seed list. To add your bootstrap node to the network, it needs to be included in the `BOOTSTRAP_RELAYS` list in the relay source and the `DEFAULT_SEEDS` list in the Fabric client.
-
-### Systemd service
-
-```ini
-[Unit]
-Description=Certrelay
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/certrelay
-Environment=CERTRELAY_BIND=0.0.0.0
-Environment=CERTRELAY_SELF_URL=https://relay.example.com
-Environment=CERTRELAY_REMOTE_IP_HEADER=x-forwarded-for
-Restart=on-failure
-RestartSec=10
-StateDirectory=certrelay
-Environment=CERTRELAY_DATA_DIR=/var/lib/certrelay
-
-[Install]
-WantedBy=multi-user.target
+certrelay --spaced-rpc-url http://user:password@127.0.0.1:12888
 ```
