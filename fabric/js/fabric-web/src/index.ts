@@ -7,31 +7,19 @@ import * as libveritas from "@spacesprotocol/libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
 
-let initPromise: Promise<void> | null = null;
-
 /**
- * Initialize the WASM module. Called automatically by `Fabric.create()`.
- * Safe to call multiple times — only runs once.
+ * Initialize the WASM module. Must be called before using Fabric
+ * when loading via `<script type="module">`, esm.sh, Deno, or
+ * any non-bundler environment. Safe to call multiple times.
+ *
+ * Not needed when using a bundler (webpack, vite, etc.).
  */
-export function init(): Promise<void> {
-  if (!initPromise) {
-    const initFn = (libveritas as any).default ?? (libveritas as any).init ?? (libveritas as any).__wbg_init;
-    initPromise = initFn ? Promise.resolve(initFn()).then(() => {}) : Promise.resolve();
-  }
-  return initPromise;
-}
+export const init: (() => Promise<any>) | undefined =
+  (libveritas as any).default ?? (libveritas as any).init ?? (libveritas as any).__wbg_init;
 
 export class Fabric extends FabricCore {
-  private constructor(options?: FabricOptions) {
+  constructor(options?: FabricOptions) {
     super({ ...options, provider: wasmProvider(libveritas) });
-  }
-
-  /**
-   * Create a new Fabric instance. Initializes WASM if needed.
-   */
-  static async create(options?: FabricOptions): Promise<Fabric> {
-    await init();
-    return new Fabric(options);
   }
 }
 
