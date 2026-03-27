@@ -395,7 +395,7 @@ export class Fabric {
     for (const h of handles) {
       const { space, label } = parseHandle(h);
       const existing = bySpace.get(space) ?? [];
-      existing.push(label);
+      if (label) existing.push(label);
       bySpace.set(space, existing);
     }
 
@@ -778,14 +778,14 @@ export function parseScanUri(uri: string): ScanParams {
 // ── Utilities ──
 
 function hintsQueryString(request: QueryRequest): string {
-  const parts: string[] = [];
+  const parts = new Set<string>();
   for (const q of request.queries) {
-    parts.push(q.space);
+    parts.add(q.space);
     for (const handle of q.handles) {
-      parts.push(`${handle}${q.space}`);
+      if (handle) parts.add(`${handle}${q.space}`);
     }
   }
-  return parts.join(",");
+  return [...parts].join(",");
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
