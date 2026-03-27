@@ -7,9 +7,24 @@ import * as libveritas from "@spacesprotocol/libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
 
+let initPromise: Promise<void> | null = null;
+
+function ensureInit(): Promise<void> {
+  if (!initPromise) {
+    const init = (libveritas as any).default ?? (libveritas as any).init ?? (libveritas as any).__wbg_init;
+    initPromise = init ? Promise.resolve(init()).then(() => {}) : Promise.resolve();
+  }
+  return initPromise;
+}
+
 export class Fabric extends FabricCore {
   constructor(options?: FabricOptions) {
     super({ ...options, provider: wasmProvider(libveritas) });
+  }
+
+  async bootstrap(): Promise<void> {
+    await ensureInit();
+    return super.bootstrap();
   }
 }
 
@@ -32,6 +47,9 @@ export type {
   Resolved,
   ResolvedBatch,
 } from "@spacesprotocol/fabric-core";
+
+// Re-export WASM init for consumers who need manual control
+export { ensureInit as init };
 
 // Re-export libveritas types so consumers don't need a separate import
 export {
