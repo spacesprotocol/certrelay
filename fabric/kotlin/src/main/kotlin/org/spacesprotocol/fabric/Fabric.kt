@@ -151,7 +151,7 @@ class Fabric(
         pool.refresh(urls.toList())
     }
 
-    fun updateAnchors(trustId: String = "", kind: TrustKind = if (trustId.isNotEmpty()) TrustKind.Trusted else TrustKind.Observed) {
+    private fun updateAnchors(trustId: String = "", kind: TrustKind = if (trustId.isNotEmpty()) TrustKind.Trusted else TrustKind.Observed) {
         val hash: String
         val peers: List<String>
 

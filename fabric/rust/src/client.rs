@@ -126,12 +126,14 @@ pub enum VerificationBadge {
 pub struct ResolvedBatch {
     pub zones: Vec<Zone>,
     pub roots: Vec<TrustId>,
+    pub relays: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Resolved {
     pub zone: Zone,
     pub roots: Vec<TrustId>,
+    pub relays: Vec<String>,
 }
 
 impl Fabric {
@@ -393,6 +395,7 @@ impl Fabric {
         Ok(Resolved {
             zone,
             roots: rb.roots,
+            relays: rb.relays,
         })
     }
 
@@ -405,6 +408,7 @@ impl Fabric {
         let lookup = libveritas::names::Lookup::new(snames);
         let mut all_zones: Vec<Zone> = Vec::new();
         let mut roots: Vec<TrustId> = Vec::new();
+        let mut relays: Vec<String> = Vec::new();
 
         let mut prev_batch: Vec<SName> = Vec::new();
         let mut batch: Vec<SName> = lookup.start();
@@ -415,11 +419,14 @@ impl Fabric {
             }
             let strs: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
             let refs: Vec<&str> = strs.iter().map(|s| s.as_str()).collect();
-            let verified = self.resolve_flat(&refs).await?;
+            let (verified, relay_url) = self.resolve_flat(&refs).await?;
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_zones.extend(verified.zones);
             roots.push(TrustId::from(verified.root_id));
+            if !relays.contains(&relay_url) {
+                relays.push(relay_url);
+            }
         }
 
         lookup.expand_zones(&mut all_zones);
@@ -427,6 +434,7 @@ impl Fabric {
         Ok(ResolvedBatch {
             zones: all_zones,
             roots,
+            relays,
         })
     }
 
@@ -446,7 +454,7 @@ impl Fabric {
             }
             let strs: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
             let refs: Vec<&str> = strs.iter().map(|s| s.as_str()).collect();
-            let verified = self.resolve_flat(&refs).await?;
+            let (verified, _relay_url) = self.resolve_flat(&refs).await?;
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_verified.push(verified);
@@ -462,7 +470,7 @@ impl Fabric {
     }
 
     /// Resolve a flat list of non-dotted handles in a single relay query.
-    async fn resolve_flat(&self, handles: &[&str]) -> Result<VerifiedMessage> {
+    async fn resolve_flat(&self, handles: &[&str]) -> Result<(VerifiedMessage, String)> {
         let mut by_space: HashMap<String, Vec<String>> = HashMap::new();
         for &h in handles {
             let sname = SName::try_from(h)
@@ -492,7 +500,7 @@ impl Fabric {
         self.query(&request).await
     }
 
-    async fn query(&self, request: &QueryRequest) -> Result<VerifiedMessage> {
+    async fn query(&self, request: &QueryRequest) -> Result<(VerifiedMessage, String)> {
         self.bootstrap().await?;
         let mut ctx = QueryContext::new();
         request
@@ -510,23 +518,24 @@ impl Fabric {
             self.pool.shuffled_urls_n(4)
         };
 
-        let res = self.send_query(&ctx, request, &relays).await?;
+        let (res, relay_url) = self.send_query(&ctx, request, &relays).await?;
         res.zones
             .iter()
             .filter(|z| z.handle.is_single_label())
             .for_each(|z| {
                 self.root_cache.insert(z.handle.to_string(), z.clone());
             });
-        Ok(res)
+        Ok((res, relay_url))
     }
 
     /// Send query to relays in order, verifying the response. Falls back on failure.
+    /// Returns the verified message and the URL of the relay that served it.
     async fn send_query(
         &self,
         ctx: &QueryContext,
         request: &QueryRequest,
         relays: &[String],
-    ) -> Result<VerifiedMessage> {
+    ) -> Result<(VerifiedMessage, String)> {
         let body = serde_json::to_vec(request)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let mut last_err = Error::NoPeers;
@@ -540,7 +549,7 @@ impl Fabric {
                     match self.veritas.lock().unwrap().verify_with_options(ctx, msg, options) {
                         Ok(res) => {
                             self.pool.mark_alive(url);
-                            return Ok(res);
+                            return Ok((res, url.clone()));
                         }
                         Err(e) => {
                             self.pool.mark_failed(url);
