@@ -1,7 +1,7 @@
 export { signMessage, verifyMessage } from "@spacesprotocol/fabric-core/signing";
 export { signRecords as signRecordsRaw } from "@spacesprotocol/fabric-core/signing";
 import { signRecords as _signRecords } from "@spacesprotocol/fabric-core/signing";
-import { OffchainRecords } from "@spacesprotocol/libveritas";
+import * as libveritas from "@spacesprotocol/libveritas";
 
 /**
  * Sign a record set and produce OffchainRecords bytes.
@@ -15,6 +15,6 @@ export function signRecords(
   secretKey: Uint8Array,
 ): Uint8Array {
   return _signRecords(recordSetBytes, secretKey, (rs, sig) =>
-    new OffchainRecords(rs, sig).toBytes()
+    new (libveritas as any).OffchainRecords(rs, sig).toBytes()
   );
 }
