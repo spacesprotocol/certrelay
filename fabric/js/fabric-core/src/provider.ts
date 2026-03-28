@@ -109,7 +109,7 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
       const anchors = (anchorsHandle as unknown as RawCarrier)[RAW];
       const v = new lib.Veritas(anchors);
       return {
-        newestAnchor: () => v.newest_anchor(),
+        newestAnchor: () => v.newestAnchor(),
         computeTrustSet: () => v.computeTrustSet(),
         verifyWithOptions(ctx, msg, options) {
           const vm = v.verifyWithOptions(getRaw(ctx), new lib.Message(msg), options);
@@ -137,8 +137,8 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
       const ctx = new lib.QueryContext();
       return {
         [RAW]: ctx,
-        addRequest: (h: string) => ctx.add_request(h),
-        addZone: (bytes: Uint8Array) => ctx.add_zone(bytes),
+        addRequest: (h: string) => ctx.addRequest(h),
+        addZone: (bytes: Uint8Array) => ctx.addZone(bytes),
       } as QueryContextHandle;
     },
     createLookup(names) {

@@ -1,6 +1,6 @@
 export { signMessage, verifyMessage } from "@spacesprotocol/fabric-core/signing";
 import { schnorr } from "@noble/curves/secp256k1";
-import { OffchainRecords } from "@spacesprotocol/libveritas";
+import { createOffchainRecords, type RecordSet } from "@spacesprotocol/libveritas";
 
 /**
  * Sign a record set and produce OffchainRecords bytes.
@@ -10,9 +10,9 @@ import { OffchainRecords } from "@spacesprotocol/libveritas";
  * @returns OffchainRecords bytes ready for `fabric.publish()`
  */
 export function signRecords(
-  recordSet: { signingId(): Uint8Array },
+  recordSet: RecordSet,
   secretKey: Uint8Array,
 ): Uint8Array {
   const sig = schnorr.sign(recordSet.signingId(), secretKey);
-  return (OffchainRecords as any).from(recordSet, sig);
+  return createOffchainRecords(recordSet, sig);
 }
