@@ -1,1 +1,1 @@
-export { signMessage, verifyMessage } from "@spacesprotocol/fabric-core/signing";
+export { signMessage, verifyMessage, signRecords } from "@spacesprotocol/fabric-core/signing";
