@@ -239,7 +239,9 @@ export class Fabric {
     builder.addHandle(cert, signedRecords);
 
     const chainProofReq = builder.chainProofRequest();
-    const chainProof = await this.prove(chainProofReq);
+    const chainProof = await this.prove(
+      typeof chainProofReq === "string" ? chainProofReq : JSON.stringify(chainProofReq)
+    );
     const msg = builder.build(chainProof);
 
     await this.broadcast(msg.toBytes());

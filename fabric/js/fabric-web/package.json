@@ -28,7 +28,7 @@
     "@noble/curves": "^1.8.0",
     "@noble/hashes": "^1.7.0",
     "@spacesprotocol/fabric-core": "*",
-    "@spacesprotocol/libveritas": "^0.0.0-dev.20260328160045"
+    "@spacesprotocol/libveritas": "^0.0.0-dev.20260328162122"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
