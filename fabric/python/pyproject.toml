@@ -3,7 +3,7 @@ name = "fabric-resolver"
 version = "0.1.0"
 description = "Python client for the certrelay fabric network"
 requires-python = ">=3.10"
-dependencies = ["libveritas==0.0.0.dev20260327173715"]
+dependencies = ["libveritas==0.0.0.dev20260330214916"]
 
 [project.optional-dependencies]
 signing = ["coincurve"]

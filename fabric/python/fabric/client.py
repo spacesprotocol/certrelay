@@ -270,18 +270,37 @@ class Fabric:
         if self._veritas is None or self._veritas.newest_anchor() == 0:
             self._update_anchors()
 
-    def publish(self, cert: bytes, signed_records: bytes) -> None:
-        """Publish signed records with a certificate chain to the network.
+    def sign(self, cert: bytes, records: bytes, secret_key: bytes, rev: bool = True) -> bytes:
+        """Build and sign a message. Returns message bytes.
 
         cert: .spacecert bytes from export()
-        signed_records: borsh-encoded OffchainRecords from sign_records()
+        records: unsigned records bytes
+        secret_key: 32-byte secret key for Schnorr signing
+        rev: whether to include revocation (default True)
         """
+        self.bootstrap()
         builder = lv.MessageBuilder()
-        builder.add_handle(cert, signed_records)
+        builder.add_handle(cert, records, rev)
         proof_req_json = builder.chain_proof_request()
         proof_bytes = self.prove(proof_req_json.encode())
-        msg = builder.build(proof_bytes)
-        self.broadcast(msg.to_bytes())
+        result = builder.build(proof_bytes)
+
+        for entry in result.unsigned:
+            sig = lv.sign_schnorr(entry.signing_id, secret_key)
+            result.message.set_signature(entry.signer, sig)
+
+        return result.message.to_bytes()
+
+    def publish(self, cert: bytes, records: bytes, secret_key: bytes, rev: bool = True) -> None:
+        """Build, sign, and broadcast a message to the network.
+
+        cert: .spacecert bytes from export()
+        records: unsigned records bytes
+        secret_key: 32-byte secret key for Schnorr signing
+        rev: whether to include revocation (default True)
+        """
+        msg = self.sign(cert, records, secret_key, rev)
+        self.broadcast(msg)
 
     def prove(self, request: bytes) -> bytes:
         """Request a chain proof from a relay."""

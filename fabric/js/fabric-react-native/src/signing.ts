@@ -1,1 +1,1 @@
-export { signMessage, verifyMessage } from "@spacesprotocol/fabric-core/signing";
+export { signSchnorr, verifySchnorr } from "@spacesprotocol/fabric-core/signing";

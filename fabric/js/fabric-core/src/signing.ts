@@ -1,65 +1,33 @@
 /**
- * Optional BIP-340 Schnorr signing with the Spaces signed-message prefix.
+ * BIP-340 Schnorr signing primitives.
  *
  * Requires the `@noble/curves` package:
  *   npm install @noble/curves
  */
 
 import { schnorr } from "@noble/curves/secp256k1";
-import { sha256 } from "@noble/hashes/sha256";
-
-const SPACES_SIGNED_MSG_PREFIX = new TextEncoder().encode(
-  "\x17Spaces Signed Message:\n",
-);
-
-function hashSignable(msg: Uint8Array): Uint8Array {
-  const combined = new Uint8Array(
-    SPACES_SIGNED_MSG_PREFIX.length + msg.length,
-  );
-  combined.set(SPACES_SIGNED_MSG_PREFIX);
-  combined.set(msg, SPACES_SIGNED_MSG_PREFIX.length);
-  return sha256(combined);
-}
 
 /**
- * Sign a message using BIP-340 Schnorr with the Spaces signed-message prefix.
+ * Sign a 32-byte digest using BIP-340 Schnorr.
  *
- * Takes raw message bytes (e.g. `recordSet.toBytes()`) and a 32-byte secret key.
- * Returns a 64-byte signature.
+ * @param digest - 32-byte signing ID
+ * @param secretKey - 32-byte BIP-340 secret key
+ * @returns 64-byte Schnorr signature
  */
-export function signMessage(
-  msg: Uint8Array,
+export function signSchnorr(
+  digest: Uint8Array,
   secretKey: Uint8Array,
 ): Uint8Array {
-  const hash = hashSignable(msg);
-  return schnorr.sign(hash, secretKey);
+  return schnorr.sign(digest, secretKey);
 }
 
 /**
- * Verify a BIP-340 Schnorr signature over a message with the Spaces signed-message prefix.
+ * Verify a BIP-340 Schnorr signature over a 32-byte digest.
  */
-export function verifyMessage(
-  msg: Uint8Array,
+export function verifySchnorr(
+  digest: Uint8Array,
   signature: Uint8Array,
   pubkey: Uint8Array,
 ): boolean {
-  const hash = hashSignable(msg);
-  return schnorr.verify(signature, hash, pubkey);
-}
-
-/**
- * Sign a record set and produce offchain records bytes.
- *
- * @param recordSetBytes - The serialized record set (e.g. `recordSet.toBytes()`)
- * @param secretKey - 32-byte BIP-340 secret key
- * @param createOffchainRecords - Function that combines record set + signature into offchain records wire format
- * @returns The offchain records bytes
- */
-export function signRecords(
-  recordSetBytes: Uint8Array,
-  secretKey: Uint8Array,
-  createOffchainRecords: (recordSet: Uint8Array, signature: Uint8Array) => Uint8Array,
-): Uint8Array {
-  const sig = signMessage(recordSetBytes, secretKey);
-  return createOffchainRecords(recordSetBytes, sig);
+  return schnorr.verify(signature, digest, pubkey);
 }

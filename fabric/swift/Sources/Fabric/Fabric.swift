@@ -362,14 +362,27 @@ public final class Fabric: @unchecked Sendable {
 
     // MARK: - Publish
 
-    /// Build a message from a certificate chain and signed records, then broadcast.
-    public func publish(cert: Data, records: Data) async throws {
+    /// Build a message from a certificate and unsigned records, sign all unsigned entries, and return the message bytes.
+    public func sign(cert: Data, records: Data, secretKey: Data, rev: Bool = true) async throws -> Data {
+        try await bootstrap()
         let builder = MessageBuilder()
-        try builder.addHandle(chainBytes: cert, recordsBytes: records)
+        try builder.addHandle(chainBytes: cert, recordsBytes: records, rev: rev)
         let proofReqJSON = try builder.chainProofRequest()
         let proofBytes = try await prove(Data(proofReqJSON.utf8))
-        let msg = try builder.build(chainProof: proofBytes)
-        try await broadcast(msg.toBytes())
+        let result = try builder.build(chainProof: proofBytes)
+
+        for entry in result.unsigned {
+            let sig = try signSchnorr(digest: Data(entry.signingId), secretKey: secretKey)
+            try result.message.setSignature(signer: entry.signer, signature: sig)
+        }
+
+        return try result.message.toBytes()
+    }
+
+    /// Build, sign, and broadcast a message.
+    public func publish(cert: Data, records: Data, secretKey: Data, rev: Bool = true) async throws {
+        let msg = try await sign(cert: cert, records: records, secretKey: secretKey, rev: rev)
+        try await broadcast(msg)
     }
 
     /// Resolve a flat list of non-dotted handles in a single relay query.

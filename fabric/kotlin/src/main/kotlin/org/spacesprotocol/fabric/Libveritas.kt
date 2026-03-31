@@ -25,6 +25,3 @@ typealias InternalException = org.spacesprotocol.libveritas.InternalException
 fun createCertificateChain(subject: String, certBytesList: List<ByteArray>): ByteArray =
     org.spacesprotocol.libveritas.createCertificateChain(subject, certBytesList)
 
-/** Re-export createOffchainRecords so callers can use it without a libveritas import. */
-fun createOffchainRecords(recordSet: RecordSet, signature: ByteArray): ByteArray =
-    org.spacesprotocol.libveritas.createOffchainRecords(recordSet, signature)

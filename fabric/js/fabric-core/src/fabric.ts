@@ -231,20 +231,58 @@ export class Fabric {
 
   // ── Publish ──
 
-  /** Publish a certificate and signed records to the network. */
-  async publish(cert: Uint8Array, signedRecords: Uint8Array): Promise<void> {
+  /**
+   * Build and sign a message ready for broadcasting.
+   *
+   * @param opts.cert - Certificate bytes (.spacecert)
+   * @param opts.records - RecordSet bytes (from RecordSet.pack().toBytes())
+   * @param opts.sign - Signs a 32-byte digest, returns 64-byte Schnorr signature
+   * @param opts.rev - Enable reverse record resolution (default: true)
+   * @returns Signed message bytes ready for broadcast()
+   */
+  async sign(opts: {
+    cert: Uint8Array;
+    records: Uint8Array;
+    sign: (signingId: Uint8Array) => Uint8Array | Promise<Uint8Array>;
+    rev?: boolean;
+  }): Promise<Uint8Array> {
     await this.bootstrap();
 
+    const { cert, records, sign, rev = true } = opts;
+
     const builder = this.provider.createMessageBuilder();
-    builder.addHandle(cert, signedRecords);
+    builder.addHandle(cert, records, rev);
 
     const chainProofReq = builder.chainProofRequest();
     const chainProof = await this.prove(
       typeof chainProofReq === "string" ? chainProofReq : JSON.stringify(chainProofReq)
     );
-    const msg = builder.build(chainProof);
+    const { message, unsigned } = builder.build(chainProof);
 
-    await this.broadcast(msg.toBytes());
+    for (const u of unsigned) {
+      const sig = await sign(u.signingId);
+      message.setSignature(u.signer, sig);
+    }
+
+    return message.toBytes();
+  }
+
+  /**
+   * Build, sign, and broadcast a message.
+   *
+   * @param opts.cert - Certificate bytes (.spacecert)
+   * @param opts.records - RecordSet bytes (from RecordSet.pack().toBytes())
+   * @param opts.sign - Signs a 32-byte digest, returns 64-byte Schnorr signature
+   * @param opts.rev - Enable reverse record resolution (default: true)
+   */
+  async publish(opts: {
+    cert: Uint8Array;
+    records: Uint8Array;
+    sign: (signingId: Uint8Array) => Uint8Array | Promise<Uint8Array>;
+    rev?: boolean;
+  }): Promise<void> {
+    const msg = await this.sign(opts);
+    await this.broadcast(msg);
   }
 
   // ── Bootstrap ──

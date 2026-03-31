@@ -509,27 +509,57 @@ func (f *Fabric) Export(handle string) ([]byte, error) {
 	return libveritas.CreateCertificateChain(handle, allCertBytes)
 }
 
-// Publish builds a message from a certificate chain and signed records, then broadcasts.
+// Sign builds and signs a message. Returns message bytes.
 // cert: .spacecert bytes from Export()
-// signedRecords: borsh-encoded OffchainRecords from SignRecords()
-func (f *Fabric) Publish(cert []byte, signedRecords []byte) error {
+// records: unsigned RecordSet bytes
+// secretKey: 32-byte BIP-340 secret key for signing
+// rev: enable reverse record resolution
+func (f *Fabric) Sign(cert []byte, records []byte, secretKey []byte, rev bool) ([]byte, error) {
+	if err := f.Bootstrap(); err != nil {
+		return nil, err
+	}
+
 	builder := libveritas.NewMessageBuilder()
-	if err := builder.AddHandle(cert, signedRecords); err != nil {
-		return fmt.Errorf("adding handle to builder: %w", err)
+	if err := builder.AddHandle(cert, records, rev); err != nil {
+		return nil, fmt.Errorf("adding handle to builder: %w", err)
 	}
 	proofReqJSON, err := builder.ChainProofRequest()
 	if err != nil {
-		return fmt.Errorf("chain proof request: %w", err)
+		return nil, fmt.Errorf("chain proof request: %w", err)
 	}
 	proofBytes, err := f.Prove([]byte(proofReqJSON))
 	if err != nil {
+		return nil, err
+	}
+	result, err := builder.Build(proofBytes)
+	if err != nil {
+		return nil, fmt.Errorf("building message: %w", err)
+	}
+
+	for _, u := range result.Unsigned {
+		sig, err := SignSchnorr(u.SigningId, secretKey)
+		if err != nil {
+			return nil, fmt.Errorf("signing entry for %s: %w", u.Handle, err)
+		}
+		if err := result.Message.SetSignature(u.Signer, sig); err != nil {
+			return nil, fmt.Errorf("setting signature for %s: %w", u.Handle, err)
+		}
+	}
+
+	return result.Message.ToBytes(), nil
+}
+
+// Publish builds, signs, and broadcasts a message.
+// cert: .spacecert bytes from Export()
+// records: unsigned RecordSet bytes
+// secretKey: 32-byte BIP-340 secret key for signing
+// rev: enable reverse record resolution
+func (f *Fabric) Publish(cert []byte, records []byte, secretKey []byte, rev bool) error {
+	msg, err := f.Sign(cert, records, secretKey, rev)
+	if err != nil {
 		return err
 	}
-	msg, err := builder.Build(proofBytes)
-	if err != nil {
-		return fmt.Errorf("building message: %w", err)
-	}
-	return f.Broadcast(msg.ToBytes())
+	return f.Broadcast(msg)
 }
 
 func (f *Fabric) resolveFlat(handles []string) (*libveritas.VerifiedMessage, error) {
