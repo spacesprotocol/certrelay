@@ -4,7 +4,7 @@ use clap::Parser;
 use spacedb::Configuration;
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
 use spaces_checkpoint::{needs_checkpoint, fetch_latest, ensure_checkpoint, integrity, CHECKPOINT_BASE_URL, CHECKPOINT_FILES};
-use crate::{bootstrap, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner};
+use crate::{bootstrap, bootstrap_from, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner, BOOTSTRAP_RELAYS};
 use crate::anchor::AnchorSets;
 
 #[derive(Parser)]
@@ -227,6 +227,30 @@ pub async fn run(
                             tracing::debug!("peer health check failed: {}", url);
                         }
                     }
+                }
+            }
+        }
+    });
+
+    // Periodically re-announce to verified peers and discover new ones
+    tokio::spawn({
+        let state = relay.state().clone();
+        async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(20 * 60));
+            loop {
+                interval.tick().await;
+                let mut urls: Vec<String> = {
+                    let peers = state.peers.lock().await;
+                    peers.peers().iter().map(|s| s.to_string()).collect()
+                };
+                // Always include seeds so we stay discoverable
+                for &seed in BOOTSTRAP_RELAYS {
+                    if !urls.iter().any(|u| u == seed) {
+                        urls.push(seed.to_string());
+                    }
+                }
+                for url in urls {
+                    let _ = bootstrap_from(&state, &url).await;
                 }
             }
         }
