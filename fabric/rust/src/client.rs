@@ -399,6 +399,136 @@ impl Fabric {
         })
     }
 
+    /// Reverse-resolve a numeric identity to its human-readable name.
+    ///
+    /// Queries relays for the reverse mapping, resolves the forward name,
+    /// and verifies the zone's num_id matches.
+    pub async fn reverse(&self, num_id: &str) -> Result<Resolved> {
+        self.bootstrap().await?;
+        let relays = self.pool.shuffled_urls_n(4);
+        let mut last_err = Error::NoPeers;
+
+        for url in &relays {
+            // 1. Fetch reverse mapping
+            let reverse_url = format!("{url}/reverse?ids={num_id}");
+            let records: Vec<crate::ReverseRecord> = match self.http
+                .get(&reverse_url)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json().await {
+                        Ok(r) => r,
+                        Err(_) => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            let Some(entry) = records.iter().find(|r| r.id == num_id) else {
+                continue;
+            };
+
+            // 2. Resolve forward
+            let resolved = match self.resolve(&entry.name).await {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = e;
+                    continue;
+                }
+            };
+
+            // 3. Verify num_id matches
+            let zone_num_id = resolved.zone.num_id
+                .as_ref()
+                .map(|id| id.to_string());
+            if zone_num_id.as_deref() != Some(num_id) {
+                last_err = Error::Decode(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("reverse mismatch: expected {num_id}, got {:?}", zone_num_id),
+                ));
+                continue;
+            }
+
+            return Ok(resolved);
+        }
+
+        Err(last_err)
+    }
+
+    /// Search for handles by address record.
+    ///
+    /// Queries relays for handles claiming the address, resolves them forward,
+    /// and filters to zones that actually contain the matching addr record.
+    pub async fn search_addr(&self, name: &str, addr: &str) -> Result<ResolvedBatch> {
+        self.bootstrap().await?;
+        let relays = self.pool.shuffled_urls_n(4);
+        let mut last_err = Error::NoPeers;
+
+        for url in &relays {
+            // 1. Fetch addr index
+            let addr_url = format!("{url}/addrs?name={name}&addr={addr}");
+            let addr_match: crate::AddrMatch = match self.http
+                .get(&addr_url)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json().await {
+                        Ok(r) => r,
+                        Err(_) => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            if addr_match.handles.is_empty() {
+                continue;
+            }
+
+            // 2. Resolve forward using the rev names
+            let rev_names: Vec<String> = addr_match.handles.iter()
+                .map(|e| e.rev.clone())
+                .collect();
+            let refs: Vec<&str> = rev_names.iter().map(|s| s.as_str()).collect();
+            let batch = match self.resolve_all(&refs).await {
+                Ok(b) => b,
+                Err(e) => {
+                    last_err = e;
+                    continue;
+                }
+            };
+
+            // 3. Filter to zones that actually have the matching addr record
+            let matching_zones: Vec<Zone> = batch.zones.into_iter()
+                .filter(|zone| {
+                    zone.records.as_ref().is_some_and(|rs| {
+                        rs.iter().filter_map(|r| r.ok()).any(|r| {
+                            matches!(&r, libveritas::sip7::Record::Addr { key, value }
+                                if key == name && value.first().map(|v| v.as_str()) == Some(addr))
+                        })
+                    })
+                })
+                .collect();
+
+            if matching_zones.is_empty() {
+                last_err = Error::Decode(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "no verified matches",
+                ));
+                continue;
+            }
+
+            return Ok(ResolvedBatch {
+                zones: matching_zones,
+                roots: batch.roots,
+                relays: batch.relays,
+            });
+        }
+
+        Err(last_err)
+    }
+
     /// Resolve multiple handles, including nested names like `hello.alice@bitcoin`.
     pub async fn resolve_all(&self, handles: &[&str]) -> Result<ResolvedBatch> {
         let snames: Vec<SName> = handles.iter()

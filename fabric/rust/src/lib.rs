@@ -276,6 +276,29 @@ impl PeerInfo {
     }
 }
 
+/// A reverse record mapping a numeric identity to its human-readable name.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReverseRecord {
+    pub id: String,
+    pub name: String,
+}
+
+/// Address lookup result — handles claiming an address.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AddrMatch {
+    pub address: String,
+    pub handles: Vec<AddrEntry>,
+}
+
+/// An entry in an address lookup result.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AddrEntry {
+    /// Canonical/flattened handle name.
+    pub handle: String,
+    /// Human-readable reverse name (from Sig record).
+    pub rev: String,
+}
+
 impl AnchorSet {
     pub fn from_anchors(anchors: Vec<RootAnchor>) -> Self {
         Self {

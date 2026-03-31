@@ -92,6 +92,12 @@ const (
 	trustKindSemiTrusted
 )
 
+// ReverseRecord represents an entry in a reverse lookup response.
+type ReverseRecord struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // Resolved wraps a single zone with its verification roots.
 type Resolved struct {
 	Zone  libveritas.Zone
@@ -435,6 +441,137 @@ func (f *Fabric) Resolve(handle string) (Resolved, error) {
 		}
 	}
 	return Resolved{}, &FabricError{Code: "decode", Message: handle + " not found"}
+}
+
+// Reverse resolves a numeric ID back to a handle by querying relays
+// for the reverse mapping, then verifying via forward resolution.
+func (f *Fabric) Reverse(numId string) (Resolved, error) {
+	if err := f.Bootstrap(); err != nil {
+		return Resolved{}, err
+	}
+	urls := f.pool.ShuffledURLs(4)
+	var lastErr error = &FabricError{Code: "no_peers", Message: "reverse resolution failed"}
+
+	for _, u := range urls {
+		resp, err := f.client.Get(u + "/reverse?ids=" + numId)
+		if err != nil {
+			f.pool.MarkFailed(u)
+			lastErr = &FabricError{Code: "http", Message: err.Error()}
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			f.pool.MarkFailed(u)
+			continue
+		}
+
+		var records []ReverseRecord
+		if err := json.Unmarshal(body, &records); err != nil {
+			continue
+		}
+
+		var name string
+		for _, r := range records {
+			if r.ID == numId {
+				name = r.Name
+				break
+			}
+		}
+		if name == "" {
+			continue
+		}
+
+		resolved, err := f.Resolve(name)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resolved.Zone.NumId != numId {
+			lastErr = &FabricError{Code: "verify", Message: fmt.Sprintf("reverse mismatch: expected %s, got %s", numId, resolved.Zone.NumId)}
+			continue
+		}
+
+		return resolved, nil
+	}
+	return Resolved{}, lastErr
+}
+
+// SearchAddr searches for handles by address record, verifies via forward resolution.
+func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
+	if err := f.Bootstrap(); err != nil {
+		return ResolvedBatch{}, err
+	}
+	urls := f.pool.ShuffledURLs(4)
+	var lastErr error = &FabricError{Code: "no_peers", Message: "address search failed"}
+
+	for _, u := range urls {
+		resp, err := f.client.Get(fmt.Sprintf("%s/addrs?name=%s&addr=%s", u, name, addr))
+		if err != nil {
+			f.pool.MarkFailed(u)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			continue
+		}
+
+		var result struct {
+			Address string `json:"address"`
+			Handles []struct {
+				Handle string `json:"handle"`
+				Rev    string `json:"rev"`
+			} `json:"handles"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			continue
+		}
+		if len(result.Handles) == 0 {
+			continue
+		}
+
+		revNames := make([]string, len(result.Handles))
+		for i, h := range result.Handles {
+			revNames[i] = h.Rev
+		}
+
+		batch, err := f.ResolveAll(revNames)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Filter to zones that actually contain the matching addr record
+		var matching []libveritas.Zone
+		for _, z := range batch.Zones {
+			if z.Records != nil {
+				rs, err := libveritas.NewRecordSet(z.Records)
+				if err != nil {
+					continue
+				}
+				records, err := rs.Unpack()
+				if err != nil {
+					continue
+				}
+				for _, r := range records {
+					if a, ok := r.(libveritas.RecordAddr); ok {
+						if a.Key == name && len(a.Value) > 0 && a.Value[0] == addr {
+							matching = append(matching, z)
+							break
+						}
+					}
+				}
+			}
+		}
+		if len(matching) == 0 {
+			continue
+		}
+		batch.Zones = matching
+		return batch, nil
+	}
+	return ResolvedBatch{}, lastErr
 }
 
 // ResolveAll resolves multiple handles including dotted names.

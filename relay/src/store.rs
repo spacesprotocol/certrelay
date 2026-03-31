@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use anyhow::anyhow;
 use libveritas::cert::Certificate;
+use resolver::ReverseRecord;
 use libveritas::Zone;
 use rusqlite::{params, Connection, OptionalExtension};
 use spaces_protocol::slabel::SLabel;
@@ -27,6 +28,27 @@ CREATE TABLE IF NOT EXISTS handles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_handles_space ON handles(space);
+
+-- Reverse records: maps a numeric identity to its preferred human-readable name.
+-- Updated when a message with a Sig record containing a non-empty rev is stored.
+CREATE TABLE IF NOT EXISTS reverse (
+    num_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- Address index: maps (name, addr) to handles for reverse address lookup.
+-- Multiple handles can claim the same address.
+CREATE TABLE IF NOT EXISTS addrs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    addr TEXT NOT NULL,
+    handle TEXT NOT NULL,
+    rev TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_addrs_lookup ON addrs(name, addr);
 "#;
 
 /// Result of a bulk store operation.
@@ -36,6 +58,8 @@ pub struct BulkStoreResult {
     pub stored: usize,
     /// Number of handles skipped (existing zone was better).
     pub skipped: usize,
+    /// Handles that were actually stored (not skipped).
+    pub stored_handles: Vec<String>,
 }
 
 /// A handle record pairing a certificate with its zone.
@@ -154,7 +178,7 @@ impl SqliteStore {
         let skipped = updates.len() - to_store.len();
 
         if to_store.is_empty() {
-            return Ok(BulkStoreResult { stored: 0, skipped });
+            return Ok(BulkStoreResult { stored: 0, skipped, stored_handles: vec![] });
         }
 
         // Bulk INSERT
@@ -182,7 +206,8 @@ impl SqliteStore {
             params.iter().map(|p| p.as_ref()).collect();
         conn.execute(&query, param_refs.as_slice())?;
 
-        Ok(BulkStoreResult { stored: to_store.len(), skipped })
+        let stored_handles = to_store.iter().map(|e| e.handle.clone()).collect();
+        Ok(BulkStoreResult { stored: to_store.len(), skipped, stored_handles })
     }
 
     /// Get a single handle record.
@@ -347,6 +372,86 @@ impl SqliteStore {
         }
 
         Ok(result)
+    }
+
+    // =========================================================================
+    // Reverse records
+    // =========================================================================
+
+    /// Bulk store reverse mappings from num_id to human-readable name.
+    pub fn set_revs(&self, entries: &[(&str, &str)]) -> anyhow::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        let now = Self::now();
+        for (num_id, name) in entries {
+            conn.execute(
+                "INSERT OR REPLACE INTO reverse (num_id, name, updated_at) VALUES (?, ?, ?)",
+                params![num_id, name, now],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Look up reverse records for the given num IDs.
+    pub fn get_revs(&self, num_ids: &[&str]) -> anyhow::Result<Vec<ReverseRecord>> {
+        if num_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders: Vec<&str> = num_ids.iter().map(|_| "?").collect();
+        let query = format!(
+            "SELECT num_id, name FROM reverse WHERE num_id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&query)?;
+        let params: Vec<&dyn rusqlite::ToSql> = num_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok(ReverseRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    // =========================================================================
+    // Address index
+    // =========================================================================
+
+    /// Update address index for a handle. Deletes old entries by canonical handle and inserts new ones.
+    /// `handle` is the canonical name (used for delete), `rev` is the human-readable name.
+    /// `entries` is a list of `(addr_name, addr_value)` pairs, e.g. `("btc", "bc1q...")`.
+    pub fn set_addrs(&self, handle: &str, rev: &str, entries: &[(&str, &str)]) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM addrs WHERE handle = ?", params![handle])?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let now = Self::now();
+        for (name, addr) in entries {
+            conn.execute(
+                "INSERT INTO addrs (name, addr, handle, rev, updated_at) VALUES (?, ?, ?, ?, ?)",
+                params![name, addr, handle, rev, now],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Look up handles by address. Returns (canonical_handle, rev_name) pairs.
+    pub fn get_addrs(&self, name: &str, addr: &str) -> anyhow::Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT handle, rev FROM addrs WHERE name = ? AND addr = ?"
+        )?;
+        let rows = stmt.query_map(params![name, addr], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 }
 
