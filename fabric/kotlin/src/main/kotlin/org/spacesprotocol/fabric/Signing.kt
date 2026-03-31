@@ -16,10 +16,10 @@ private fun hashSignable(msg: ByteArray): ByteArray {
 /**
  * Sign a message using BIP-340 Schnorr with the Spaces signed-message prefix.
  *
- * Takes raw message bytes (e.g. `recordSet.toBytes()`) and a 32-byte secret key.
+ * Takes raw message bytes and a 32-byte secret key.
  * Returns a 64-byte signature.
  */
-fun signMessage(msg: ByteArray, secretKey: ByteArray): ByteArray {
+fun signSchnorr(msg: ByteArray, secretKey: ByteArray): ByteArray {
     require(secretKey.size == 32) { "secret key must be 32 bytes, got ${secretKey.size}" }
     val hash = hashSignable(msg)
     val auxRand = ByteArray(32).also { SecureRandom().nextBytes(it) }
@@ -29,18 +29,9 @@ fun signMessage(msg: ByteArray, secretKey: ByteArray): ByteArray {
 /**
  * Verify a BIP-340 Schnorr signature over a message with the Spaces signed-message prefix.
  */
-fun verifyMessage(msg: ByteArray, signature: ByteArray, pubkey: ByteArray): Boolean {
+fun verifySchnorr(msg: ByteArray, signature: ByteArray, pubkey: ByteArray): Boolean {
     require(signature.size == 64) { "signature must be 64 bytes, got ${signature.size}" }
     require(pubkey.size == 32) { "pubkey must be 32 bytes (x-only), got ${pubkey.size}" }
     val hash = hashSignable(msg)
     return Secp256k1.verifySchnorr(signature, hash, pubkey)
-}
-
-/**
- * Sign a record set and return borsh-encoded OffchainRecords.
- * Combines signMessage + createOffchainRecords in a single call.
- */
-fun signRecords(recordSet: RecordSet, secretKey: ByteArray): ByteArray {
-    val sig = signMessage(recordSet.toBytes(), secretKey)
-    return createOffchainRecords(recordSet, sig)
 }

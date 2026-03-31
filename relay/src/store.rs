@@ -5,8 +5,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::anyhow;
-use libveritas::cert::{Certificate, Signature};
-use libveritas::msg::OffchainRecords;
+use libveritas::cert::Certificate;
 use libveritas::Zone;
 use rusqlite::{params, Connection, OptionalExtension};
 use spaces_protocol::slabel::SLabel;
@@ -24,8 +23,6 @@ CREATE TABLE IF NOT EXISTS handles (
     epoch_height INTEGER NOT NULL,
     offchain_seq INTEGER NOT NULL DEFAULT 0,
     delegate_offchain_seq INTEGER NOT NULL DEFAULT 0,
-    records_sig BLOB,
-    delegate_records_sig BLOB,
     updated_at INTEGER NOT NULL
 );
 
@@ -51,29 +48,6 @@ pub struct HandleRecord {
     pub offchain_seq: u64,
     /// Delegate records sequence number.
     pub delegate_offchain_seq: u64,
-    /// Signature for the owner's off-chain records.
-    pub records_sig: Option<Signature>,
-    /// Signature for the delegate's off-chain records.
-    pub delegate_records_sig: Option<Signature>,
-}
-
-impl HandleRecord {
-    /// Reconstruct signed OffchainRecords from zone records + stored signature.
-    pub fn records(&self) -> Option<OffchainRecords> {
-        let records = self.zone.records.clone()?;
-        let sig = self.records_sig?;
-        Some(OffchainRecords { records, signature: sig })
-    }
-
-    /// Reconstruct signed delegate OffchainRecords from delegate records + stored signature.
-    pub fn delegate_records(&self) -> Option<OffchainRecords> {
-        let delegate = match &self.zone.delegate {
-            libveritas::ProvableOption::Exists { value } => value.records.clone()?,
-            _ => return None,
-        };
-        let sig = self.delegate_records_sig?;
-        Some(OffchainRecords { records: delegate, signature: sig })
-    }
 }
 
 /// Lightweight row for hints queries (no blob deserialization).
@@ -134,8 +108,6 @@ impl SqliteStore {
             epoch_height: u32,
             offchain_seq: u64,
             delegate_offchain_seq: u64,
-            records_sig: Option<Vec<u8>>,
-            delegate_records_sig: Option<Vec<u8>>,
         }
 
         let mut entries = Vec::with_capacity(updates.len());
@@ -156,8 +128,6 @@ impl SqliteStore {
                 epoch_height: update.epoch_height,
                 offchain_seq: update.offchain_seq,
                 delegate_offchain_seq: update.delegate_offchain_seq,
-                records_sig: update.records_sig.map(|s| s.0.to_vec()),
-                delegate_records_sig: update.delegate_records_sig.map(|s| s.0.to_vec()),
             });
         }
 
@@ -189,14 +159,14 @@ impl SqliteStore {
 
         // Bulk INSERT
         let placeholders: Vec<String> =
-            to_store.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)".to_string()).collect();
+            to_store.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string()).collect();
         let query = format!(
-            "INSERT OR REPLACE INTO handles (handle, space, cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, records_sig, delegate_records_sig, updated_at) VALUES {}",
+            "INSERT OR REPLACE INTO handles (handle, space, cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, updated_at) VALUES {}",
             placeholders.join(", ")
         );
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> =
-            Vec::with_capacity(to_store.len() * 10);
+            Vec::with_capacity(to_store.len() * 8);
         for e in &to_store {
             params.push(Box::new(e.handle.clone()));
             params.push(Box::new(e.space.clone()));
@@ -205,8 +175,6 @@ impl SqliteStore {
             params.push(Box::new(e.epoch_height));
             params.push(Box::new(e.offchain_seq as i64));
             params.push(Box::new(e.delegate_offchain_seq as i64));
-            params.push(Box::new(e.records_sig.clone()));
-            params.push(Box::new(e.delegate_records_sig.clone()));
             params.push(Box::new(now));
         }
 
@@ -221,16 +189,16 @@ impl SqliteStore {
     pub fn get_handle(&self, handle: &str) -> anyhow::Result<Option<HandleRecord>> {
         let conn = self.conn.lock().unwrap();
 
-        let row: Option<(Vec<u8>, Vec<u8>, u32, i64, i64, Option<Vec<u8>>, Option<Vec<u8>>)> = conn
+        let row: Option<(Vec<u8>, Vec<u8>, u32, i64, i64)> = conn
             .query_row(
-                "SELECT cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, records_sig, delegate_records_sig FROM handles WHERE handle = ?",
+                "SELECT cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq FROM handles WHERE handle = ?",
                 params![handle],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()?;
 
         match row {
-            Some((cert_bytes, zone_bytes, epoch_height, offchain_seq, delegate_offchain_seq, records_sig, delegate_records_sig)) => {
+            Some((cert_bytes, zone_bytes, epoch_height, offchain_seq, delegate_offchain_seq)) => {
                 let cert: Certificate = borsh::from_slice(&cert_bytes)
                     .map_err(|e| anyhow!("failed to deserialize certificate: {}", e))?;
                 let zone: Zone = borsh::from_slice(&zone_bytes)
@@ -239,8 +207,6 @@ impl SqliteStore {
                     cert, zone, epoch_height,
                     offchain_seq: offchain_seq as u64,
                     delegate_offchain_seq: delegate_offchain_seq as u64,
-                    records_sig: sig_from_blob(records_sig),
-                    delegate_records_sig: sig_from_blob(delegate_records_sig),
                 }))
             }
             None => Ok(None),
@@ -257,7 +223,7 @@ impl SqliteStore {
 
         let placeholders: Vec<&str> = handles.iter().map(|_| "?").collect();
         let query = format!(
-            "SELECT cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, records_sig, delegate_records_sig FROM handles WHERE handle IN ({})",
+            "SELECT cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq FROM handles WHERE handle IN ({})",
             placeholders.join(", ")
         );
 
@@ -268,12 +234,12 @@ impl SqliteStore {
             .collect();
 
         let rows = stmt.query_map(params.as_slice(), |row| {
-            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, u32>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, Option<Vec<u8>>>(5)?, row.get::<_, Option<Vec<u8>>>(6)?))
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, u32>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))
         })?;
 
         let mut results = Vec::new();
         for row in rows {
-            let (cert_bytes, zone_bytes, epoch_height, offchain_seq, delegate_offchain_seq, records_sig, delegate_records_sig) = row?;
+            let (cert_bytes, zone_bytes, epoch_height, offchain_seq, delegate_offchain_seq) = row?;
             let cert: Certificate = borsh::from_slice(&cert_bytes)
                 .map_err(|e| anyhow!("failed to deserialize certificate: {}", e))?;
             let zone: Zone = borsh::from_slice(&zone_bytes)
@@ -282,8 +248,6 @@ impl SqliteStore {
                 cert, zone, epoch_height,
                 offchain_seq: offchain_seq as u64,
                 delegate_offchain_seq: delegate_offchain_seq as u64,
-                records_sig: sig_from_blob(records_sig),
-                delegate_records_sig: sig_from_blob(delegate_records_sig),
             });
         }
 
@@ -384,12 +348,6 @@ impl SqliteStore {
 
         Ok(result)
     }
-}
-
-fn sig_from_blob(blob: Option<Vec<u8>>) -> Option<Signature> {
-    let bytes = blob?;
-    let arr: [u8; 64] = bytes.try_into().ok()?;
-    Some(Signature(arr))
 }
 
 #[cfg(test)]

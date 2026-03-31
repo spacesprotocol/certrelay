@@ -1,64 +1,33 @@
-"""Optional BIP-340 Schnorr signing with the Spaces signed-message prefix.
+"""BIP-340 Schnorr signing helpers.
 
-Requires the ``coincurve`` package::
-
-    pip install fabric-resolver[signing]
+These are thin wrappers around ``libveritas.sign_schnorr`` and
+``libveritas.verify_schnorr``.  They exist so callers can import from
+``fabric.signing`` without reaching into ``libveritas`` directly.
 """
 
 from __future__ import annotations
 
-import hashlib
-
 import libveritas as lv
 
-try:
-    from coincurve import PrivateKey
-    from coincurve.keys import PublicKeyXOnly
-except ImportError:
-    raise ImportError(
-        "The 'coincurve' package is required for signing. "
-        "Install it with: pip install fabric-resolver[signing]"
-    )
 
-_SPACES_SIGNED_MSG_PREFIX = b"\x17Spaces Signed Message:\n"
+def sign_schnorr(signing_id: bytes, secret_key: bytes) -> bytes:
+    """Sign a 32-byte signing ID with a 32-byte secret key.
 
-
-def _hash_signable(msg: bytes) -> bytes:
-    h = hashlib.sha256()
-    h.update(_SPACES_SIGNED_MSG_PREFIX)
-    h.update(msg)
-    return h.digest()
-
-
-def sign_message(msg: bytes, secret_key: bytes) -> bytes:
-    """Sign a message using BIP-340 Schnorr with the Spaces signed-message prefix.
-
-    Takes raw message bytes (e.g. ``record_set.to_bytes()``) and a 32-byte secret key.
-    Returns a 64-byte signature.
+    Returns a 64-byte BIP-340 Schnorr signature.
     """
     if len(secret_key) != 32:
         raise ValueError(f"secret key must be 32 bytes, got {len(secret_key)}")
-    digest = _hash_signable(msg)
-    pk = PrivateKey(secret_key)
-    return pk.sign_schnorr(digest)
+    if len(signing_id) != 32:
+        raise ValueError(f"signing_id must be 32 bytes, got {len(signing_id)}")
+    return lv.sign_schnorr(signing_id, secret_key)
 
 
-def sign_records(record_set, secret_key: bytes) -> bytes:
-    """Sign a RecordSet and return borsh-encoded OffchainRecords.
-
-    Takes a ``libveritas.RecordSet`` and a 32-byte secret key.
-    Returns bytes suitable for passing to ``Fabric.publish()``.
-    """
-    sig = sign_message(record_set.to_bytes(), secret_key)
-    return lv.create_offchain_records(record_set, sig)
-
-
-def verify_message(msg: bytes, signature: bytes, pubkey: bytes) -> bool:
-    """Verify a BIP-340 Schnorr signature over a message with the Spaces signed-message prefix."""
+def verify_schnorr(signing_id: bytes, signature: bytes, pubkey: bytes) -> bool:
+    """Verify a 64-byte BIP-340 Schnorr signature over a 32-byte signing ID."""
     if len(signature) != 64:
         raise ValueError(f"signature must be 64 bytes, got {len(signature)}")
     if len(pubkey) != 32:
         raise ValueError(f"pubkey must be 32 bytes (x-only), got {len(pubkey)}")
-    digest = _hash_signable(msg)
-    xonly = PublicKeyXOnly(pubkey)
-    return xonly.verify(signature, digest)
+    if len(signing_id) != 32:
+        raise ValueError(f"signing_id must be 32 bytes, got {len(signing_id)}")
+    return lv.verify_schnorr(signing_id, signature, pubkey)

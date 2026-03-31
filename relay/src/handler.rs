@@ -3,7 +3,7 @@ use governor::DefaultKeyedRateLimiter;
 use governor::Quota;
 use libveritas::cert::{Witness};
 use libveritas::msg::{self, QueryContext};
-use libveritas::sname::{Label, NameLike, SName};
+use libveritas::spaces_protocol::sname::{Subname, NameLike, SName};
 use libveritas::{ProvableOption, Veritas, Zone};
 use spaces_protocol::slabel::SLabel;
 use std::collections::{HashMap, HashSet};
@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use libveritas::builder::{DataUpdateRequest, MessageBuilder};
+use libveritas::sip7::{Error, Record, RecordSet};
 use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorSets;
 use crate::spaced::SpacedClient;
@@ -79,8 +80,6 @@ impl Handler {
                     continue;
                 },
             };
-            let parent_records = parent.records();
-            let parent_delegate_records = parent.delegate_records();
             let mut parent_cert = parent.cert;
             // Skip receipt if client can verify from their cached epoch
             if query
@@ -93,17 +92,26 @@ impl Handler {
                 }
             }
 
+            let sig_data = parent.zone.records.as_ref()
+                .map(|set| get_sig(set)).flatten();
+
             builder.add_update(DataUpdateRequest {
                 handle: parent_cert.subject.clone(),
-                records: parent_records,
-                delegate_records: parent_delegate_records,
+                records: parent.zone.records.clone(),
+                delegate_records: if let ProvableOption::Exists {value } = parent.zone.delegate {
+                    value.records
+                } else {
+                    None
+                },
+                rev: sig_data.is_some_and(|sd| !sd.rev.is_empty())
             });
+
             builder.add_cert(parent_cert);
 
             let unique_handles: Vec<String> = query
                 .handles
                 .iter()
-                .filter_map(|h| Label::from_str(h).ok())
+                .filter_map(|h| Subname::from_str(h).ok())
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .filter_map(|h| SName::join(&h, &space).ok())
@@ -114,16 +122,34 @@ impl Handler {
             let handle_entries = self.store.get_handles(&handle_refs)?;
 
             for handle in handle_entries {
+                let sig_data = handle.zone.records.as_ref()
+                    .map(|set| get_sig(set)).flatten();
+
                 builder.add_update(DataUpdateRequest {
                     handle: handle.cert.subject.clone(),
-                    records: handle.records(),
-                    delegate_records: handle.delegate_records(),
+                    records: handle.zone.records,
+                    delegate_records: if let ProvableOption::Exists {value } = handle.zone.delegate {
+                        value.records
+                    } else {
+                        None
+                    },
+                    rev: sig_data.is_some_and(|sd| !sd.rev.is_empty())
                 });
                 builder.add_cert(handle.cert);
             }
         }
         let chain = chain.prove(&builder.chain_proof_request()).await?;
-        Ok(builder.build(chain)?)
+        let (msg, unsigned) = builder.build(chain)?;
+        if !unsigned.is_empty() {
+            let missing_sigs = unsigned.iter().map(|u| u.signer.to_string())
+                .collect::<Vec<_>>().join(", ");
+
+            return Err(anyhow::anyhow!("Could not build response: missing signatures for {}",
+                missing_sigs)
+            );
+        }
+        
+        Ok(msg)
     }
 
     pub fn hints(&self, handles: &mut [&str]) -> anyhow::Result<resolver::HintsResponse> {
@@ -217,31 +243,6 @@ impl Handler {
             }
         }
 
-        // Extract signatures from the original wire message
-        use libveritas::cert::Signature;
-        struct RecordSigs {
-            records_sig: Option<Signature>,
-            delegate_records_sig: Option<Signature>,
-        }
-        let mut sig_map: HashMap<String, RecordSigs> = HashMap::new();
-        for bundle in &res.message.spaces {
-            let space = bundle.subject.to_string();
-            sig_map.insert(space.clone(), RecordSigs {
-                records_sig: bundle.records.as_ref().map(|r| r.signature),
-                delegate_records_sig: bundle.delegate_records.as_ref().map(|r| r.signature),
-            });
-            for epoch in &bundle.epochs {
-                for handle in &epoch.handles {
-                    if let Ok(sname) = SName::join(&handle.name, &bundle.subject) {
-                        sig_map.insert(sname.to_string(), RecordSigs {
-                            records_sig: handle.records.as_ref().map(|r| r.signature),
-                            delegate_records_sig: None,
-                        });
-                    }
-                }
-            }
-        }
-
         // Max offchain records size per handle (1 KB)
         const MAX_RECORDS_SIZE: usize = 1024;
 
@@ -278,15 +279,12 @@ impl Handler {
                     }
                     _ => 0,
                 };
-                let sigs = sig_map.remove(&handle_str);
                 Some(HandleRecord {
                     cert,
                     zone: (*zone).clone(),
                     epoch_height,
                     offchain_seq,
                     delegate_offchain_seq,
-                    records_sig: sigs.as_ref().and_then(|s| s.records_sig),
-                    delegate_records_sig: sigs.as_ref().and_then(|s| s.delegate_records_sig),
                 })
             })
             .collect();
@@ -310,4 +308,26 @@ fn epoch_hint_verifiable_by(hint: &resolver::EpochHint, zone: &Zone) -> bool {
     } else {
         false
     }
+}
+
+pub struct SigData {
+    signer: SName,
+    rev: SName,
+    sig: Vec<u8>
+}
+
+fn get_sig(rset : &RecordSet) -> Option<SigData>  {
+    for r in rset.iter().filter_map (|r| r.ok()){
+        match r {
+            Record::Sig { signer, rev, sig } => {
+                return Some(SigData {
+                    signer,
+                    rev,
+                    sig
+                })
+            }
+            _ => continue,
+        }
+    }
+    None
 }

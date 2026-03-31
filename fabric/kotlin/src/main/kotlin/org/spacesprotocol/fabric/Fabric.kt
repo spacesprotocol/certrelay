@@ -411,17 +411,42 @@ class Fabric(
     }
 
     /**
-     * Publish builds a message from a certificate chain and signed records, then broadcasts.
-     * cert: .spacecert bytes from export()
-     * signedRecords: borsh-encoded OffchainRecords from signRecords()
+     * Builds and signs a message from a certificate chain and unsigned records.
+     * Returns the serialized message bytes ready for broadcast.
+     *
+     * @param cert .spacecert bytes from export()
+     * @param records unsigned records bytes
+     * @param secretKey 32-byte secret key for signing
+     * @param rev whether this is a revocation
      */
-    fun publish(cert: ByteArray, signedRecords: ByteArray) {
+    fun sign(cert: ByteArray, records: ByteArray, secretKey: ByteArray, rev: Boolean = true): ByteArray {
+        bootstrap()
         val builder = MessageBuilder()
-        builder.addHandle(cert, signedRecords)
+        builder.addHandle(cert, records, rev)
         val proofReqJson = builder.chainProofRequest()
         val proofBytes = prove(proofReqJson.toByteArray())
-        val msg = builder.build(proofBytes)
-        broadcast(msg.toBytes())
+        val result = builder.build(proofBytes)
+
+        for (entry in result.unsigned) {
+            val auxRand = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+            val sig = fr.acinq.secp256k1.Secp256k1.signSchnorr(entry.signingId, secretKey, auxRand)
+            result.message.setSignature(entry.signer, sig)
+        }
+
+        return result.message.toBytes()
+    }
+
+    /**
+     * Builds, signs, and broadcasts a message from a certificate chain and unsigned records.
+     *
+     * @param cert .spacecert bytes from export()
+     * @param records unsigned records bytes
+     * @param secretKey 32-byte secret key for signing
+     * @param rev whether this is a revocation
+     */
+    fun publish(cert: ByteArray, records: ByteArray, secretKey: ByteArray, rev: Boolean = true) {
+        val msg = sign(cert, records, secretKey, rev)
+        broadcast(msg)
     }
 
     // -- Peers --

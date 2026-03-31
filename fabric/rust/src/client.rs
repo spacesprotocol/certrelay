@@ -1,7 +1,7 @@
 use libveritas::builder::MessageBuilder;
 use libveritas::cert::CertificateChain;
-use libveritas::msg::{ChainProof, OffchainRecords, QueryContext};
-use libveritas::sname::{NameLike, SName};
+use libveritas::msg::{ChainProof, QueryContext};
+use libveritas::spaces_protocol::sname::{NameLike, SName};
 use libveritas::{compute_trust_set, MessageError, ProvableOption, SovereigntyState, TrustSet, VerifiedMessage, Veritas, Zone};
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
@@ -698,18 +698,49 @@ impl Fabric {
         }
     }
 
-    /// Publish signed records with a certificate chain to the network.
+    /// Build, sign, and broadcast a message.
     ///
-    /// Takes `.spacecert` bytes (from `export()`) and signed records (from `sign_records()`).
-    /// Builds a message, fetches a chain proof, and broadcasts.
-    pub async fn publish(&self, cert: &[u8], records: OffchainRecords) -> Result<()> {
+    /// * `cert` — `.spacecert` bytes (from `export()`)
+    /// * `records` — RecordSet bytes (from `RecordSet::pack().to_bytes()`)
+    /// * `secret_key` — 32-byte BIP-340 secret key
+    /// * `rev` — enable reverse record resolution
+    #[cfg(feature = "signing")]
+    pub async fn publish(
+        &self,
+        cert: &[u8],
+        records: &[u8],
+        secret_key: &[u8; 32],
+        rev: bool,
+    ) -> Result<()> {
+        let msg = self.sign(cert, records, secret_key, rev).await?;
+        self.broadcast(&msg).await
+    }
+
+    /// Build and sign a message ready for broadcasting.
+    ///
+    /// Returns the signed message bytes.
+    #[cfg(feature = "signing")]
+    pub async fn sign(
+        &self,
+        cert: &[u8],
+        records: &[u8],
+        secret_key: &[u8; 32],
+        rev: bool,
+    ) -> Result<Vec<u8>> {
         let chain = CertificateChain::from_slice(cert)?;
         let mut builder = MessageBuilder::new();
-        builder.add_handle(chain, records);
+        builder.add_handle(chain, records, rev);
         let proof_bytes = self.prove(&builder.chain_proof_request()).await?;
         let proof = ChainProof::from_slice(&proof_bytes)?;
-        let msg = builder.build(proof)?;
-        self.broadcast(&msg.to_bytes()).await
+        let (mut message, unsigned) = builder.build(proof)?;
+
+        for u in &unsigned {
+            let sig = crate::signing::sign_schnorr(&u.signing_id, secret_key)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+            message.set_signature(&u.signer, &sig);
+        }
+
+        Ok(message.to_bytes())
     }
 
     /// Fetch the peer list from a random relay.

@@ -46,10 +46,21 @@ export interface LookupHandle {
   expandZones(zones: FabricZone[]): FabricZone[];
 }
 
+export interface UnsignedEntry {
+  handle: string;
+  signer: string;
+  signingId: Uint8Array;
+}
+
+export interface BuiltMessage {
+  message: { toBytes(): Uint8Array; setSignature(signer: string, sig: Uint8Array): void };
+  unsigned: UnsignedEntry[];
+}
+
 export interface MessageBuilderHandle {
-  addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array): void;
-  chainProofRequest(): string;
-  build(chainProof: Uint8Array): { toBytes(): Uint8Array };
+  addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array, rev: boolean): void;
+  chainProofRequest(): any;
+  build(chainProof: Uint8Array): BuiltMessage;
 }
 
 export interface VeritasProvider {
@@ -170,16 +181,17 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
     createMessageBuilder() {
       const builder = new lib.MessageBuilder();
       return {
-        addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array) {
-          builder.addHandle(chainBytes, recordsBytes);
+        addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array, rev: boolean) {
+          builder.addHandle(chainBytes, recordsBytes, rev);
         },
         chainProofRequest() {
           return builder.chainProofRequest();
         },
-        build(chainProof: Uint8Array) {
-          const msg = builder.build(chainProof);
+        build(chainProof: Uint8Array): BuiltMessage {
+          const result = builder.build(chainProof);
           return {
-            toBytes: () => msg.toBytes(),
+            message: result.message,
+            unsigned: result.unsigned,
           };
         },
       };
@@ -317,7 +329,7 @@ export function reactNativeProvider(
     createMessageBuilder() {
       const builder = new lib.MessageBuilder();
       return {
-        addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array) {
+        addHandle(chainBytes: Uint8Array, recordsBytes: Uint8Array, rev: boolean) {
           const chainBuf = chainBytes.buffer.slice(
             chainBytes.byteOffset,
             chainBytes.byteOffset + chainBytes.byteLength,
@@ -326,19 +338,30 @@ export function reactNativeProvider(
             recordsBytes.byteOffset,
             recordsBytes.byteOffset + recordsBytes.byteLength,
           ) as ArrayBuffer;
-          builder.addHandle(chainBuf, recordsBuf);
+          builder.addHandle(chainBuf, recordsBuf, rev);
         },
         chainProofRequest() {
           return builder.chainProofRequest();
         },
-        build(chainProof: Uint8Array) {
+        build(chainProof: Uint8Array): BuiltMessage {
           const proofBuf = chainProof.buffer.slice(
             chainProof.byteOffset,
             chainProof.byteOffset + chainProof.byteLength,
           ) as ArrayBuffer;
-          const msg = builder.build(proofBuf);
+          const result = builder.build(proofBuf);
           return {
-            toBytes: () => new Uint8Array(msg.toBytes()),
+            message: {
+              toBytes: () => new Uint8Array(result.message.toBytes()),
+              setSignature: (signer: string, sig: Uint8Array) => {
+                const sigBuf = sig.buffer.slice(sig.byteOffset, sig.byteOffset + sig.byteLength) as ArrayBuffer;
+                result.message.setSignature(signer, sigBuf);
+              },
+            },
+            unsigned: result.unsigned.map((u: any) => ({
+              handle: u.handle,
+              signer: u.signer,
+              signingId: new Uint8Array(u.signingId),
+            })),
           };
         },
       };
