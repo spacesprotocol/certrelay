@@ -145,6 +145,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/anchors", get(handle_anchors))
         .route("/hints", get(handle_hints))
         .route("/chain-proof", post(handle_chain_proof))
+        .route("/reverse", get(handle_reverse))
+        .route("/addrs", get(handle_addrs))
         .layer(cors)
         .with_state(state)
 }
@@ -400,6 +402,79 @@ async fn handle_hints(
     }
 }
 
+
+/// GET /reverse?ids=num1,num2,... - Look up reverse records for numeric identities.
+///
+/// Returns: JSON array of { id, name } objects.
+async fn handle_reverse(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let ip = client_ip(&addr, &headers, &state.remote_ip_header);
+    if state.limiters.query.check_key(&ip).is_err() {
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
+    }
+
+    let ids = match params.get("ids") {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => return (StatusCode::BAD_REQUEST, "missing ids parameter").into_response(),
+    };
+
+    let id_list: Vec<&str> = ids.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if id_list.len() > 20 {
+        return (StatusCode::BAD_REQUEST, "too many ids (max 20)").into_response();
+    }
+
+    match state.handler.store.get_revs(&id_list) {
+        Ok(records) => axum::Json(records).into_response(),
+        Err(e) => {
+            tracing::warn!("reverse lookup failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "lookup failed").into_response()
+        }
+    }
+}
+
+/// GET /addrs?name=btc&addr=bc1q... - Look up handles by address.
+///
+/// Returns: JSON { address, handles } object.
+async fn handle_addrs(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let ip = client_ip(&addr, &headers, &state.remote_ip_header);
+    if state.limiters.query.check_key(&ip).is_err() {
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
+    }
+
+    let name = match params.get("name") {
+        Some(n) if !n.is_empty() => n,
+        _ => return (StatusCode::BAD_REQUEST, "missing name parameter").into_response(),
+    };
+    let address = match params.get("addr") {
+        Some(a) if !a.is_empty() => a,
+        _ => return (StatusCode::BAD_REQUEST, "missing addr parameter").into_response(),
+    };
+
+    match state.handler.store.get_addrs(name, address) {
+        Ok(pairs) => {
+            let handles = pairs.into_iter()
+                .map(|(handle, rev)| resolver::AddrEntry { handle, rev })
+                .collect();
+            axum::Json(resolver::AddrMatch {
+                address: address.clone(),
+                handles,
+            }).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("addr lookup failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "lookup failed").into_response()
+        }
+    }
+}
 
 /// POST /chain-proof - Build a chain proof from a ChainProofRequest.
 ///

@@ -226,6 +226,96 @@ class Fabric:
             raise FabricError("decode", f"{handle} not found")
         return Resolved(zone=zone, roots=batch.roots)
 
+    def reverse(self, num_id: str) -> Resolved:
+        """Reverse-resolve a numeric ID to a verified handle."""
+        self.bootstrap()
+        urls = self._pool.shuffled_urls(4)
+        last_err: Exception = FabricError("no_peers", "reverse resolution failed")
+
+        for u in urls:
+            try:
+                req = Request(u + "/reverse?ids=" + num_id)
+                with urlopen(req, timeout=10) as resp:
+                    if resp.status >= 300:
+                        self._pool.mark_failed(u)
+                        continue
+                    entries = json.loads(resp.read())
+            except Exception as e:
+                self._pool.mark_failed(u)
+                last_err = FabricError("http", str(e))
+                continue
+
+            entry = next((e for e in entries if e.get("id") == num_id), None)
+            if entry is None:
+                continue
+
+            try:
+                resolved = self.resolve(entry["name"])
+            except Exception as e:
+                last_err = e
+                continue
+
+            if getattr(resolved.zone, "num_id", None) != num_id:
+                last_err = FabricError("verify", f"num_id mismatch: expected {num_id}")
+                continue
+
+            self._pool.mark_alive(u)
+            return resolved
+
+        raise last_err
+
+    def search_addr(self, name: str, addr: str) -> ResolvedBatch:
+        """Search for handles by address record, verify via forward resolution."""
+        self.bootstrap()
+        urls = self._pool.shuffled_urls(4)
+        last_err: Exception = FabricError("no_peers", "address search failed")
+
+        for u in urls:
+            try:
+                req = Request(f"{u}/addrs?name={name}&addr={addr}")
+                with urlopen(req, timeout=10) as resp:
+                    if resp.status >= 300:
+                        self._pool.mark_failed(u)
+                        continue
+                    result = json.loads(resp.read())
+            except Exception as e:
+                self._pool.mark_failed(u)
+                last_err = FabricError("http", str(e))
+                continue
+
+            handles = result.get("handles", [])
+            if not handles:
+                continue
+
+            rev_names = [h["rev"] for h in handles]
+            try:
+                batch = self.resolve_all(rev_names)
+            except Exception as e:
+                last_err = e
+                continue
+
+            # Filter to zones that actually contain the matching addr record
+            matching = []
+            for z in batch.zones:
+                if z.records is not None:
+                    try:
+                        rs = lv.RecordSet(z.records)
+                        for r in rs.unpack():
+                            if hasattr(r, 'key') and hasattr(r, 'value'):
+                                if r.key == name and len(r.value) > 0 and r.value[0] == addr:
+                                    matching.append(z)
+                                    break
+                    except Exception:
+                        continue
+
+            if not matching:
+                continue
+
+            self._pool.mark_alive(u)
+            return ResolvedBatch(zones=matching, roots=batch.roots)
+
+        raise last_err
+
     def resolve_all(self, handles: list[str]) -> ResolvedBatch:
         lookup = lv.Lookup(handles)
         all_zones: list[lv.Zone] = []

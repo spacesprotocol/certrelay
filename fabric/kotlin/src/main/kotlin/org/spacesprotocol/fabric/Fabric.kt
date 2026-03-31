@@ -47,6 +47,15 @@ private val json = Json { ignoreUnknownKeys = true }
 
 private enum class TrustKind { Trusted, SemiTrusted, Observed }
 
+@Serializable
+private data class ReverseEntry(val id: String, val name: String)
+
+@Serializable
+private data class AddrMatchResponse(val address: String, val handles: List<AddrEntryResponse>)
+
+@Serializable
+private data class AddrEntryResponse(val handle: String, val rev: String)
+
 private class AnchorPool {
     var trusted: String = ""      // raw entries JSON array string
     var semiTrusted: String = ""  // raw entries JSON array string
@@ -195,6 +204,97 @@ class Fabric(
         val zone = batch.zones.find { it.handle == handle }
             ?: throw FabricError("decode", "$handle not found")
         return Resolved(zone, batch.roots)
+    }
+
+    fun reverse(numId: String): Resolved {
+        bootstrap()
+        val urls = pool.shuffledUrls(4)
+        var lastErr: Exception = FabricError("no_peers", "reverse resolution failed")
+
+        for (url in urls) {
+            val entries = try {
+                val conn = java.net.URI("$url/reverse?ids=$numId").toURL().openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 10_000
+                if (conn.responseCode >= 300) {
+                    pool.markFailed(url)
+                    continue
+                }
+                val body = java.io.InputStreamReader(conn.inputStream).readText()
+                conn.disconnect()
+                json.decodeFromString<List<ReverseEntry>>(body)
+            } catch (e: Exception) {
+                pool.markFailed(url)
+                lastErr = FabricError("http", e.message ?: e.toString())
+                continue
+            }
+
+            val entry = entries.find { it.id == numId } ?: continue
+
+            val resolved = try {
+                resolve(entry.name)
+            } catch (e: Exception) {
+                lastErr = e
+                continue
+            }
+
+            if (resolved.zone.numId != numId) {
+                lastErr = FabricError("verify", "reverse mismatch: expected $numId, got ${resolved.zone.numId}")
+                continue
+            }
+
+            return resolved
+        }
+
+        throw lastErr
+    }
+
+    fun searchAddr(name: String, addr: String): ResolvedBatch {
+        bootstrap()
+        val urls = pool.shuffledUrls(4)
+        var lastErr: Exception = FabricError("no_peers", "address search failed")
+
+        for (url in urls) {
+            val result = try {
+                val conn = java.net.URI("$url/addrs?name=$name&addr=$addr").toURL().openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 10_000
+                if (conn.responseCode >= 300) { pool.markFailed(url); continue }
+                val body = java.io.InputStreamReader(conn.inputStream).readText()
+                conn.disconnect()
+                json.decodeFromString<AddrMatchResponse>(body)
+            } catch (e: Exception) {
+                pool.markFailed(url)
+                lastErr = FabricError("http", e.message ?: e.toString())
+                continue
+            }
+
+            if (result.handles.isEmpty()) continue
+
+            val revNames = result.handles.map { it.rev }
+            val batch = try {
+                resolveAll(revNames)
+            } catch (e: Exception) {
+                lastErr = e
+                continue
+            }
+
+            // Filter to zones that actually contain the matching addr record
+            val matching = batch.zones.filter { z ->
+                z.records?.let { bytes ->
+                    try {
+                        val rs = RecordSet(bytes)
+                        rs.unpack().any { r ->
+                            r is Record.Addr && r.key == name && r.value.isNotEmpty() && r.value[0] == addr
+                        }
+                    } catch (_: Exception) { false }
+                } ?: false
+            }
+            if (matching.isEmpty()) continue
+            return ResolvedBatch(matching, batch.roots)
+        }
+
+        throw lastErr
     }
 
     fun resolveAll(handles: List<String>): ResolvedBatch {

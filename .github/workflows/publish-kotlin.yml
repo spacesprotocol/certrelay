@@ -37,7 +37,7 @@ jobs:
         run: |
           gradle wrapper
           ./gradlew build publish \
-            -Pversion="${{ steps.version.outputs.version }}"
+            -PlibVersion="${{ steps.version.outputs.version }}"
         env:
           CENTRAL_PORTAL_USERNAME: ${{ secrets.CENTRAL_PORTAL_USERNAME }}
           CENTRAL_PORTAL_PASSWORD: ${{ secrets.CENTRAL_PORTAL_PASSWORD }}

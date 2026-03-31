@@ -386,6 +386,92 @@ export class Fabric {
     return { zone, roots: batch.roots };
   }
 
+  /** Reverse-resolve a numeric ID back to a verified handle. */
+  async reverse(numId: string): Promise<Resolved> {
+    await this.bootstrap();
+    const relays = this.pool.shuffledUrls(4);
+    let lastErr: Error = new FabricError("reverse resolution failed", "no_peers");
+
+    for (const url of relays) {
+      try {
+        const resp = await fetch(`${url}/reverse?ids=${encodeURIComponent(numId)}`);
+        if (!resp.ok) continue;
+        const records: { id: string; name: string }[] = await resp.json();
+        const entry = records.find(r => r.id === numId);
+        if (!entry) continue;
+
+        let resolved: Resolved;
+        try {
+          resolved = await this.resolve(entry.name);
+        } catch (e) {
+          lastErr = e instanceof Error ? e : new FabricError(String(e), "decode");
+          continue;
+        }
+
+        const json = resolved.zone.toJson();
+        if (json?.num_id !== numId) {
+          lastErr = new FabricError(`reverse mismatch: expected ${numId}`, "verify");
+          continue;
+        }
+
+        return resolved;
+      } catch (e) {
+        lastErr = e instanceof FabricError ? e : new FabricError(`reverse failed: ${e}`, "http");
+      }
+    }
+
+    throw lastErr;
+  }
+
+  /** Search for handles by address record. Verifies results via forward resolution. */
+  async searchAddr(name: string, addr: string): Promise<ResolvedBatch> {
+    await this.bootstrap();
+    const relays = this.pool.shuffledUrls(4);
+    let lastErr: Error = new FabricError("address search failed", "no_peers");
+
+    for (const url of relays) {
+      try {
+        const resp = await fetch(
+          `${url}/addrs?name=${encodeURIComponent(name)}&addr=${encodeURIComponent(addr)}`
+        );
+        if (!resp.ok) continue;
+        const result: { address: string; handles: { handle: string; rev: string }[] } = await resp.json();
+        if (!result.handles || result.handles.length === 0) continue;
+
+        const revNames = result.handles.map(h => h.rev);
+        let batch: ResolvedBatch;
+        try {
+          batch = await this.resolveAll(revNames);
+        } catch (e) {
+          lastErr = e instanceof Error ? e : new FabricError(String(e), "decode");
+          continue;
+        }
+
+        // Filter to zones that actually have the matching addr record
+        const matching = batch.zones.filter(zone => {
+          const json = zone.toJson();
+          const records = json?.records;
+          if (!Array.isArray(records)) return false;
+          return records.some((r: any) =>
+            r.type === "addr" && r.key === name &&
+            Array.isArray(r.value) && r.value[0] === addr
+          );
+        });
+
+        if (matching.length === 0) {
+          lastErr = new FabricError("no verified matches", "verify");
+          continue;
+        }
+
+        return { zones: matching, roots: batch.roots };
+      } catch (e) {
+        lastErr = e instanceof FabricError ? e : new FabricError(`addr search failed: ${e}`, "http");
+      }
+    }
+
+    throw lastErr;
+  }
+
   /** Resolve multiple handles, including nested names like `hello.alice@bitcoin`. */
   async resolveAll(handles: string[]): Promise<ResolvedBatch> {
     const lookup = this.provider.createLookup(handles);

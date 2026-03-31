@@ -77,6 +77,21 @@ private enum TrustKind {
 
 // MARK: - Anchor pool
 
+private struct ReverseEntry: Decodable {
+    let id: String
+    let name: String
+}
+
+private struct AddrMatchResponse: Decodable {
+    let address: String
+    let handles: [AddrEntryResponse]
+}
+
+private struct AddrEntryResponse: Decodable {
+    let handle: String
+    let rev: String
+}
+
 private struct AnchorPool {
     var trusted: String = ""      // raw entries JSON array string
     var semiTrusted: String = ""  // raw entries JSON array string
@@ -314,6 +329,77 @@ public final class Fabric: @unchecked Sendable {
             throw FabricError.decode("\(handle) not found")
         }
         return Resolved(zone: zone, roots: batch.roots)
+    }
+
+    /// Reverse-resolve a numeric ID to a verified handle.
+    public func reverse(_ numId: String) async throws -> Resolved {
+        try await bootstrap()
+        let relays = pool.shuffledUrls(4)
+
+        for url in relays {
+            guard let requestUrl = URL(string: "\(url)/reverse?ids=\(numId)") else { continue }
+            let entries: [ReverseEntry]
+            do {
+                let (data, resp) = try await session.data(from: requestUrl)
+                guard let httpResp = resp as? HTTPURLResponse, httpResp.statusCode < 300 else { continue }
+                entries = try JSONDecoder().decode([ReverseEntry].self, from: data)
+            } catch { continue }
+
+            guard let entry = entries.first(where: { $0.id == numId }) else { continue }
+
+            let resolved: Resolved
+            do {
+                resolved = try await resolve(entry.name)
+            } catch { continue }
+
+            guard resolved.zone.numId == numId else { continue }
+            return resolved
+        }
+
+        throw FabricError.noPeers
+    }
+
+    /// Search for handles by address record, verify via forward resolution.
+    public func searchAddr(_ name: String, addr: String) async throws -> ResolvedBatch {
+        try await bootstrap()
+        let relays = pool.shuffledUrls(4)
+
+        for url in relays {
+            guard let requestUrl = URL(string: "\(url)/addrs?name=\(name)&addr=\(addr)") else { continue }
+            let result: AddrMatchResponse
+            do {
+                let (data, resp) = try await session.data(from: requestUrl)
+                guard let httpResp = resp as? HTTPURLResponse, httpResp.statusCode < 300 else { continue }
+                result = try JSONDecoder().decode(AddrMatchResponse.self, from: data)
+            } catch { continue }
+
+            if result.handles.isEmpty { continue }
+
+            let revNames = result.handles.map(\.rev)
+            let batch: ResolvedBatch
+            do {
+                batch = try await resolveAll(revNames)
+            } catch { continue }
+
+            // Filter to zones that actually contain the matching addr record
+            let matching = batch.zones.filter { z in
+                guard let bytes = z.records else { return false }
+                do {
+                    let rs = RecordSet(data: bytes)
+                    let records = try rs.unpack()
+                    return records.contains { r in
+                        if case .addr(let k, let v) = r, k == name, let first = v.first, first == addr {
+                            return true
+                        }
+                        return false
+                    }
+                } catch { return false }
+            }
+            if matching.isEmpty { continue }
+            return ResolvedBatch(zones: matching, roots: batch.roots)
+        }
+
+        throw FabricError.noPeers
     }
 
     /// Resolve multiple handles, including dotted names like `hello.alice@bitcoin`.

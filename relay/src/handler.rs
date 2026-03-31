@@ -247,6 +247,9 @@ impl Handler {
         const MAX_RECORDS_SIZE: usize = 1024;
 
         // Bundle each certificate with its zone and epoch height
+        let mut revs: Vec<(String, String)> = Vec::new();
+        // canonical_handle -> (rev_name, vec of (addr_name, addr_value))
+        let mut addr_index: HashMap<String, (String, Vec<(String, String)>)> = HashMap::new();
         let updates: Vec<HandleRecord> = res
             .certificates()
             .filter_map(|cert| {
@@ -257,6 +260,26 @@ impl Handler {
                     if records.as_slice().len() > MAX_RECORDS_SIZE {
                         tracing::warn!("{}: records exceed {} bytes, skipping", handle_str, MAX_RECORDS_SIZE);
                         return None;
+                    }
+                    if let Some(sig) = get_sig(records) {
+                        if !sig.rev.is_empty() {
+                            let rev_name = sig.rev.to_string();
+                            if let Some(num_id) = &zone.num_id {
+                                revs.push((num_id.to_string(), rev_name.clone()));
+                            }
+                            // Collect addr records for the index
+                            let mut addrs = Vec::new();
+                            for r in records.iter().filter_map(|r| r.ok()) {
+                                if let Record::Addr { key, value } = &r {
+                                    if let Some(first) = value.first() {
+                                        addrs.push((key.clone(), first.clone()));
+                                    }
+                                }
+                            }
+                            if !addrs.is_empty() {
+                                addr_index.insert(handle_str.clone(), (rev_name, addrs));
+                            }
+                        }
                     }
                 }
 
@@ -295,6 +318,23 @@ impl Handler {
             result.stored,
             result.skipped
         );
+
+        if !revs.is_empty() {
+            let rev_refs: Vec<(&str, &str)> = revs.iter()
+                .map(|(id, name)| (id.as_str(), name.as_str()))
+                .collect();
+            self.store.set_revs(&rev_refs)?;
+        }
+
+        // Update address index for stored handles
+        for handle in &result.stored_handles {
+            if let Some((rev, addrs)) = addr_index.get(handle) {
+                let refs: Vec<(&str, &str)> = addrs.iter()
+                    .map(|(n, a)| (n.as_str(), a.as_str()))
+                    .collect();
+                self.store.set_addrs(handle, rev, &refs)?;
+            }
+        }
 
         Ok(())
     }
