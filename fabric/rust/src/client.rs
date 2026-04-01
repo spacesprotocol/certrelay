@@ -9,6 +9,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use libveritas::sip7::{RecordSet, SIG_PRIMARY_ZONE};
 use serde::{Deserialize, Serialize};
 use crate::{AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId};
 use crate::seeds::SEEDS;
@@ -399,11 +400,11 @@ impl Fabric {
         })
     }
 
-    /// Reverse-resolve a numeric identity to its human-readable name.
+    /// Reverse-resolve by a num id to retrieve its human-readable name.
     ///
     /// Queries relays for the reverse mapping, resolves the forward name,
     /// and verifies the zone's num_id matches.
-    pub async fn reverse(&self, num_id: &str) -> Result<Resolved> {
+    pub async fn resolve_by_id(&self, num_id: &str) -> Result<Resolved> {
         self.bootstrap().await?;
         let relays = self.pool.shuffled_urls_n(4);
         let mut last_err = Error::NoPeers;
@@ -833,16 +834,16 @@ impl Fabric {
     /// * `cert` — `.spacecert` bytes (from `export()`)
     /// * `records` — RecordSet bytes (from `RecordSet::pack().to_bytes()`)
     /// * `secret_key` — 32-byte BIP-340 secret key
-    /// * `rev` — enable reverse record resolution
+    /// * `primary` — set num id to handle reverse mapping.
     #[cfg(feature = "signing")]
     pub async fn publish(
         &self,
         cert: &[u8],
-        records: &[u8],
+        records: RecordSet,
         secret_key: &[u8; 32],
-        rev: bool,
+        primary: bool,
     ) -> Result<()> {
-        let msg = self.sign(cert, records, secret_key, rev).await?;
+        let msg = self.sign(cert, records, secret_key, primary).await?;
         self.broadcast(&msg).await
     }
 
@@ -853,21 +854,25 @@ impl Fabric {
     pub async fn sign(
         &self,
         cert: &[u8],
-        records: &[u8],
+        records: RecordSet,
         secret_key: &[u8; 32],
-        rev: bool,
+        primary: bool,
     ) -> Result<Vec<u8>> {
         let chain = CertificateChain::from_slice(cert)?;
         let mut builder = MessageBuilder::new();
-        builder.add_handle(chain, records, rev);
+        builder.add_handle(chain, records);
         let proof_bytes = self.prove(&builder.chain_proof_request()).await?;
         let proof = ChainProof::from_slice(&proof_bytes)?;
-        let (mut message, unsigned) = builder.build(proof)?;
+        let (mut message, mut unsigned) = builder.build(proof)?;
 
-        for u in &unsigned {
-            let sig = crate::signing::sign_schnorr(&u.signing_id, secret_key)
+        for u in &mut unsigned {
+            if primary {
+                u.flags |= SIG_PRIMARY_ZONE;
+            }
+            let sig = crate::signing::sign_schnorr(&u.signing_id(), secret_key)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-            message.set_signature(&u.signer, &sig);
+            let signed = u.pack_sig(sig.to_vec());
+            message.set_records(&u.canonical, signed);
         }
 
         Ok(message.to_bytes())

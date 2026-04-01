@@ -8,5 +8,5 @@ github.com/decred/dcrd/crypto/blake256 v1.0.0 h1:/8DMNYp9SGi5f0w7uCm6d6M4OU2rGFK
 github.com/decred/dcrd/crypto/blake256 v1.0.0/go.mod h1:sQl2p6Y26YV+ZOcSTP6thNdn47hh8kt6rqSlvmrXFAc=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 h1:YLtO71vCjJRCBcrPMtQ9nqBsqpA1m5sE92cU+pd5Mcc=
 github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1/go.mod h1:hyedUtir6IdtD/7lIxGeCxkaw7y45JueMRL4DIyJDKs=
-github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260331155703 h1:/qC9ZgfzVDVxaA9DzrZrT+OclQxMhAMa1d6D188yRnE=
-github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260331155703/go.mod h1:HXnX2FNL43ueJuedsQwX9GF5jRHYZLqXYfFLWz900H8=
+github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260401060756 h1:OBef908r/1+Tw+P6maj2gsv+RToyiH1uSgbPiS9CDxw=
+github.com/spacesprotocol/libveritas-go v0.0.0-dev.20260401060756/go.mod h1:HXnX2FNL43ueJuedsQwX9GF5jRHYZLqXYfFLWz900H8=

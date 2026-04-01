@@ -273,7 +273,7 @@ public final class Fabric: @unchecked Sendable {
 
     // MARK: - Anchors
 
-    public func updateAnchors(kind: TrustKind = .observed) async throws {
+    private func updateAnchors(kind: TrustKind = .observed) async throws {
         let hash: String
         var peers: [String]
 
@@ -331,8 +331,8 @@ public final class Fabric: @unchecked Sendable {
         return Resolved(zone: zone, roots: batch.roots)
     }
 
-    /// Reverse-resolve a numeric ID to a verified handle.
-    public func reverse(_ numId: String) async throws -> Resolved {
+    /// Resolve a numeric ID to a verified handle.
+    public func resolveById(_ numId: String) async throws -> Resolved {
         try await bootstrap()
         let relays = pool.shuffledUrls(4)
 
@@ -449,25 +449,29 @@ public final class Fabric: @unchecked Sendable {
     // MARK: - Publish
 
     /// Build a message from a certificate and unsigned records, sign all unsigned entries, and return the message bytes.
-    public func sign(cert: Data, records: Data, secretKey: Data, rev: Bool = true) async throws -> Data {
+    public func sign(cert: Data, records: Data, secretKey: Data, primary: Bool = true) async throws -> Data {
         try await bootstrap()
         let builder = MessageBuilder()
-        try builder.addHandle(chainBytes: cert, recordsBytes: records, rev: rev)
+        try builder.addHandle(chainBytes: cert, recordsBytes: records)
         let proofReqJSON = try builder.chainProofRequest()
         let proofBytes = try await prove(Data(proofReqJSON.utf8))
         let result = try builder.build(chainProof: proofBytes)
 
-        for entry in result.unsigned {
-            let sig = try signSchnorr(digest: Data(entry.signingId), secretKey: secretKey)
-            try result.message.setSignature(signer: entry.signer, signature: sig)
+        for u in result.unsigned {
+            if primary {
+                u.setFlags(flags: u.flags() | 0x01)
+            }
+            let sig = try signSchnorr(digest: Data(u.signingId()), secretKey: secretKey)
+            let signed = try u.packSig(signature: sig)
+            try result.message.setRecords(canonical: u.canonical(), recordsBytes: signed)
         }
 
         return try result.message.toBytes()
     }
 
     /// Build, sign, and broadcast a message.
-    public func publish(cert: Data, records: Data, secretKey: Data, rev: Bool = true) async throws {
-        let msg = try await sign(cert: cert, records: records, secretKey: secretKey, rev: rev)
+    public func publish(cert: Data, records: Data, secretKey: Data, primary: Bool = true) async throws {
+        let msg = try await sign(cert: cert, records: records, secretKey: secretKey, primary: primary)
         try await broadcast(msg)
     }
 
