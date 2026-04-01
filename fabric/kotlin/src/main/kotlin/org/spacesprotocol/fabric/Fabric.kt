@@ -206,7 +206,7 @@ class Fabric(
         return Resolved(zone, batch.roots)
     }
 
-    fun reverse(numId: String): Resolved {
+    fun resolveById(numId: String): Resolved {
         bootstrap()
         val urls = pool.shuffledUrls(4)
         var lastErr: Exception = FabricError("no_peers", "reverse resolution failed")
@@ -519,33 +519,29 @@ class Fabric(
      * @param secretKey 32-byte secret key for signing
      * @param rev whether this is a revocation
      */
-    fun sign(cert: ByteArray, records: ByteArray, secretKey: ByteArray, rev: Boolean = true): ByteArray {
+    fun sign(cert: ByteArray, records: ByteArray, secretKey: ByteArray, primary: Boolean = true): ByteArray {
         bootstrap()
         val builder = MessageBuilder()
-        builder.addHandle(cert, records, rev)
+        builder.addHandle(cert, records)
         val proofReqJson = builder.chainProofRequest()
         val proofBytes = prove(proofReqJson.toByteArray())
         val result = builder.build(proofBytes)
 
-        for (entry in result.unsigned) {
+        for (u in result.unsigned) {
+            if (primary) {
+                u.setFlags((u.flags().toInt() or 0x01).toUByte())
+            }
             val auxRand = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-            val sig = fr.acinq.secp256k1.Secp256k1.signSchnorr(entry.signingId, secretKey, auxRand)
-            result.message.setSignature(entry.signer, sig)
+            val sig = fr.acinq.secp256k1.Secp256k1.signSchnorr(u.signingId(), secretKey, auxRand)
+            val signed = u.packSig(sig)
+            result.message.setRecords(u.canonical(), signed)
         }
 
         return result.message.toBytes()
     }
 
-    /**
-     * Builds, signs, and broadcasts a message from a certificate chain and unsigned records.
-     *
-     * @param cert .spacecert bytes from export()
-     * @param records unsigned records bytes
-     * @param secretKey 32-byte secret key for signing
-     * @param rev whether this is a revocation
-     */
-    fun publish(cert: ByteArray, records: ByteArray, secretKey: ByteArray, rev: Boolean = true) {
-        val msg = sign(cert, records, secretKey, rev)
+    fun publish(cert: ByteArray, records: ByteArray, secretKey: ByteArray, primary: Boolean = true) {
+        val msg = sign(cert, records, secretKey, primary)
         broadcast(msg)
     }
 

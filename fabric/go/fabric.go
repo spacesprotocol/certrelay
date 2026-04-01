@@ -443,9 +443,9 @@ func (f *Fabric) Resolve(handle string) (Resolved, error) {
 	return Resolved{}, &FabricError{Code: "decode", Message: handle + " not found"}
 }
 
-// Reverse resolves a numeric ID back to a handle by querying relays
+// ResolveById resolves a numeric ID to a handle by querying relays
 // for the reverse mapping, then verifying via forward resolution.
-func (f *Fabric) Reverse(numId string) (Resolved, error) {
+func (f *Fabric) ResolveById(numId string) (Resolved, error) {
 	if err := f.Bootstrap(); err != nil {
 		return Resolved{}, err
 	}
@@ -488,8 +488,8 @@ func (f *Fabric) Reverse(numId string) (Resolved, error) {
 			continue
 		}
 
-		if resolved.Zone.NumId != numId {
-			lastErr = &FabricError{Code: "verify", Message: fmt.Sprintf("reverse mismatch: expected %s, got %s", numId, resolved.Zone.NumId)}
+		if resolved.Zone.NumId == nil || *resolved.Zone.NumId != numId {
+			lastErr = &FabricError{Code: "verify", Message: fmt.Sprintf("reverse mismatch: expected %s", numId)}
 			continue
 		}
 
@@ -547,10 +547,7 @@ func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
 		var matching []libveritas.Zone
 		for _, z := range batch.Zones {
 			if z.Records != nil {
-				rs, err := libveritas.NewRecordSet(z.Records)
-				if err != nil {
-					continue
-				}
+				rs := libveritas.NewRecordSet(*z.Records)
 				records, err := rs.Unpack()
 				if err != nil {
 					continue
@@ -651,13 +648,13 @@ func (f *Fabric) Export(handle string) ([]byte, error) {
 // records: unsigned RecordSet bytes
 // secretKey: 32-byte BIP-340 secret key for signing
 // rev: enable reverse record resolution
-func (f *Fabric) Sign(cert []byte, records []byte, secretKey []byte, rev bool) ([]byte, error) {
+func (f *Fabric) Sign(cert []byte, records []byte, secretKey []byte, primary bool) ([]byte, error) {
 	if err := f.Bootstrap(); err != nil {
 		return nil, err
 	}
 
 	builder := libveritas.NewMessageBuilder()
-	if err := builder.AddHandle(cert, records, rev); err != nil {
+	if err := builder.AddHandle(cert, records); err != nil {
 		return nil, fmt.Errorf("adding handle to builder: %w", err)
 	}
 	proofReqJSON, err := builder.ChainProofRequest()
@@ -674,12 +671,16 @@ func (f *Fabric) Sign(cert []byte, records []byte, secretKey []byte, rev bool) (
 	}
 
 	for _, u := range result.Unsigned {
-		sig, err := SignSchnorr(u.SigningId, secretKey)
-		if err != nil {
-			return nil, fmt.Errorf("signing entry for %s: %w", u.Handle, err)
+		if primary {
+			u.SetFlags(u.Flags() | 0x01)
 		}
-		if err := result.Message.SetSignature(u.Signer, sig); err != nil {
-			return nil, fmt.Errorf("setting signature for %s: %w", u.Handle, err)
+		sig, err := SignSchnorr(u.SigningId(), secretKey)
+		if err != nil {
+			return nil, fmt.Errorf("signing entry for %s: %w", u.Canonical(), err)
+		}
+		signed := u.PackSig(sig)
+		if err := result.Message.SetRecords(u.Canonical(), signed); err != nil {
+			return nil, fmt.Errorf("setting records for %s: %w", u.Canonical(), err)
 		}
 	}
 
@@ -687,12 +688,8 @@ func (f *Fabric) Sign(cert []byte, records []byte, secretKey []byte, rev bool) (
 }
 
 // Publish builds, signs, and broadcasts a message.
-// cert: .spacecert bytes from Export()
-// records: unsigned RecordSet bytes
-// secretKey: 32-byte BIP-340 secret key for signing
-// rev: enable reverse record resolution
-func (f *Fabric) Publish(cert []byte, records []byte, secretKey []byte, rev bool) error {
-	msg, err := f.Sign(cert, records, secretKey, rev)
+func (f *Fabric) Publish(cert []byte, records []byte, secretKey []byte, primary bool) error {
+	msg, err := f.Sign(cert, records, secretKey, primary)
 	if err != nil {
 		return err
 	}

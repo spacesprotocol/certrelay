@@ -226,8 +226,8 @@ class Fabric:
             raise FabricError("decode", f"{handle} not found")
         return Resolved(zone=zone, roots=batch.roots)
 
-    def reverse(self, num_id: str) -> Resolved:
-        """Reverse-resolve a numeric ID to a verified handle."""
+    def resolve_by_id(self, num_id: str) -> Resolved:
+        """Resolve a numeric ID to a verified handle."""
         self.bootstrap()
         urls = self._pool.shuffled_urls(4)
         last_err: Exception = FabricError("no_peers", "reverse resolution failed")
@@ -360,36 +360,27 @@ class Fabric:
         if self._veritas is None or self._veritas.newest_anchor() == 0:
             self._update_anchors()
 
-    def sign(self, cert: bytes, records: bytes, secret_key: bytes, rev: bool = True) -> bytes:
-        """Build and sign a message. Returns message bytes.
-
-        cert: .spacecert bytes from export()
-        records: unsigned records bytes
-        secret_key: 32-byte secret key for Schnorr signing
-        rev: whether to include revocation (default True)
-        """
+    def sign(self, cert: bytes, records: bytes, secret_key: bytes, primary: bool = True) -> bytes:
+        """Build and sign a message. Returns message bytes."""
         self.bootstrap()
         builder = lv.MessageBuilder()
-        builder.add_handle(cert, records, rev)
+        builder.add_handle(cert, records)
         proof_req_json = builder.chain_proof_request()
         proof_bytes = self.prove(proof_req_json.encode())
         result = builder.build(proof_bytes)
 
-        for entry in result.unsigned:
-            sig = lv.sign_schnorr(entry.signing_id, secret_key)
-            result.message.set_signature(entry.signer, sig)
+        for u in result.unsigned:
+            if primary:
+                u.set_flags(u.flags() | 0x01)
+            sig = lv.sign_schnorr(u.signing_id(), secret_key)
+            signed = u.pack_sig(sig)
+            result.message.set_records(u.canonical(), signed)
 
         return result.message.to_bytes()
 
-    def publish(self, cert: bytes, records: bytes, secret_key: bytes, rev: bool = True) -> None:
-        """Build, sign, and broadcast a message to the network.
-
-        cert: .spacecert bytes from export()
-        records: unsigned records bytes
-        secret_key: 32-byte secret key for Schnorr signing
-        rev: whether to include revocation (default True)
-        """
-        msg = self.sign(cert, records, secret_key, rev)
+    def publish(self, cert: bytes, records: bytes, secret_key: bytes, primary: bool = True) -> None:
+        """Build, sign, and broadcast a message."""
+        msg = self.sign(cert, records, secret_key, primary)
         self.broadcast(msg)
 
     def prove(self, request: bytes) -> bytes:

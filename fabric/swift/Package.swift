@@ -9,7 +9,7 @@ let package = Package(
         .executable(name: "fabric", targets: ["FabricCLI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/spacesprotocol/libveritas-swift.git", exact: "0.0.0-dev.20260331155756"),
+        .package(url: "https://github.com/spacesprotocol/libveritas-swift.git", exact: "0.0.0-dev.20260401061144"),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1.git", exact: "0.17.0"),
     ],
     targets: [

@@ -237,21 +237,21 @@ export class Fabric {
    * @param opts.cert - Certificate bytes (.spacecert)
    * @param opts.records - RecordSet bytes (from RecordSet.pack().toBytes())
    * @param opts.sign - Signs a 32-byte digest, returns 64-byte Schnorr signature
-   * @param opts.rev - Enable reverse record resolution (default: true)
+   * @param opts.primary - Set SIG_PRIMARY_ZONE flag for num id reverse mapping (default: true)
    * @returns Signed message bytes ready for broadcast()
    */
   async sign(opts: {
     cert: Uint8Array;
     records: Uint8Array;
     sign: (signingId: Uint8Array) => Uint8Array | Promise<Uint8Array>;
-    rev?: boolean;
+    primary?: boolean;
   }): Promise<Uint8Array> {
     await this.bootstrap();
 
-    const { cert, records, sign, rev = true } = opts;
+    const { cert, records, sign, primary = true } = opts;
 
     const builder = this.provider.createMessageBuilder();
-    builder.addHandle(cert, records, rev);
+    builder.addHandle(cert, records);
 
     const chainProofReq = builder.chainProofRequest();
     const chainProof = await this.prove(
@@ -260,8 +260,12 @@ export class Fabric {
     const { message, unsigned } = builder.build(chainProof);
 
     for (const u of unsigned) {
-      const sig = await sign(u.signingId);
-      message.setSignature(u.signer, sig);
+      if (primary) {
+        u.setFlags(u.flags() | 0x01); // SIG_PRIMARY_ZONE
+      }
+      const sig = await sign(u.signingId());
+      const signed = u.packSig(sig);
+      message.setRecords(u.canonical(), signed);
     }
 
     return message.toBytes();
@@ -273,13 +277,13 @@ export class Fabric {
    * @param opts.cert - Certificate bytes (.spacecert)
    * @param opts.records - RecordSet bytes (from RecordSet.pack().toBytes())
    * @param opts.sign - Signs a 32-byte digest, returns 64-byte Schnorr signature
-   * @param opts.rev - Enable reverse record resolution (default: true)
+   * @param opts.primary - Set SIG_PRIMARY_ZONE flag for num id reverse mapping (default: true)
    */
   async publish(opts: {
     cert: Uint8Array;
     records: Uint8Array;
     sign: (signingId: Uint8Array) => Uint8Array | Promise<Uint8Array>;
-    rev?: boolean;
+    primary?: boolean;
   }): Promise<void> {
     const msg = await this.sign(opts);
     await this.broadcast(msg);
@@ -386,8 +390,8 @@ export class Fabric {
     return { zone, roots: batch.roots };
   }
 
-  /** Reverse-resolve a numeric ID back to a verified handle. */
-  async reverse(numId: string): Promise<Resolved> {
+  /** Resolve a numeric ID to a verified handle. */
+  async resolveById(numId: string): Promise<Resolved> {
     await this.bootstrap();
     const relays = this.pool.shuffledUrls(4);
     let lastErr: Error = new FabricError("reverse resolution failed", "no_peers");

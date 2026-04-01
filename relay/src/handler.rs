@@ -11,7 +11,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use libveritas::builder::{DataUpdateRequest, MessageBuilder};
-use libveritas::sip7::{Error, Record, RecordSet};
+use libveritas::sip7::{Error, Record, RecordSet, SIG_PRIMARY_ZONE};
 use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorSets;
 use crate::spaced::SpacedClient;
@@ -92,9 +92,6 @@ impl Handler {
                 }
             }
 
-            let sig_data = parent.zone.records.as_ref()
-                .map(|set| get_sig(set)).flatten();
-
             builder.add_update(DataUpdateRequest {
                 handle: parent_cert.subject.clone(),
                 records: parent.zone.records.clone(),
@@ -103,7 +100,6 @@ impl Handler {
                 } else {
                     None
                 },
-                rev: sig_data.is_some_and(|sd| !sd.rev.is_empty())
             });
 
             builder.add_cert(parent_cert);
@@ -122,9 +118,6 @@ impl Handler {
             let handle_entries = self.store.get_handles(&handle_refs)?;
 
             for handle in handle_entries {
-                let sig_data = handle.zone.records.as_ref()
-                    .map(|set| get_sig(set)).flatten();
-
                 builder.add_update(DataUpdateRequest {
                     handle: handle.cert.subject.clone(),
                     records: handle.zone.records,
@@ -133,7 +126,6 @@ impl Handler {
                     } else {
                         None
                     },
-                    rev: sig_data.is_some_and(|sd| !sd.rev.is_empty())
                 });
                 builder.add_cert(handle.cert);
             }
@@ -141,7 +133,7 @@ impl Handler {
         let chain = chain.prove(&builder.chain_proof_request()).await?;
         let (msg, unsigned) = builder.build(chain)?;
         if !unsigned.is_empty() {
-            let missing_sigs = unsigned.iter().map(|u| u.signer.to_string())
+            let missing_sigs = unsigned.iter().map(|u| u.canonical.to_string())
                 .collect::<Vec<_>>().join(", ");
 
             return Err(anyhow::anyhow!("Could not build response: missing signatures for {}",
@@ -261,24 +253,24 @@ impl Handler {
                         tracing::warn!("{}: records exceed {} bytes, skipping", handle_str, MAX_RECORDS_SIZE);
                         return None;
                     }
-                    if let Some(sig) = get_sig(records) {
-                        if !sig.rev.is_empty() {
-                            let rev_name = sig.rev.to_string();
+                    if let Some(sig) = records.sig() {
+                        let rev_name = sig.handle.to_string();
+                        if sig.flags & SIG_PRIMARY_ZONE == SIG_PRIMARY_ZONE {
                             if let Some(num_id) = &zone.num_id {
                                 revs.push((num_id.to_string(), rev_name.clone()));
                             }
-                            // Collect addr records for the index
-                            let mut addrs = Vec::new();
-                            for r in records.iter().filter_map(|r| r.ok()) {
-                                if let Record::Addr { key, value } = &r {
-                                    if let Some(first) = value.first() {
-                                        addrs.push((key.clone(), first.clone()));
-                                    }
+                        }
+                        // Collect addr records for the index
+                        let mut addrs = Vec::new();
+                        for r in records.iter().filter_map(|r| r.ok()) {
+                            if let Record::Addr { key, value } = &r {
+                                if let Some(first) = value.first() {
+                                    addrs.push((key.clone(), first.clone()));
                                 }
                             }
-                            if !addrs.is_empty() {
-                                addr_index.insert(handle_str.clone(), (rev_name, addrs));
-                            }
+                        }
+                        if !addrs.is_empty() {
+                            addr_index.insert(handle_str.clone(), (rev_name, addrs));
                         }
                     }
                 }
@@ -348,26 +340,4 @@ fn epoch_hint_verifiable_by(hint: &resolver::EpochHint, zone: &Zone) -> bool {
     } else {
         false
     }
-}
-
-pub struct SigData {
-    signer: SName,
-    rev: SName,
-    sig: Vec<u8>
-}
-
-fn get_sig(rset : &RecordSet) -> Option<SigData>  {
-    for r in rset.iter().filter_map (|r| r.ok()){
-        match r {
-            Record::Sig { signer, rev, sig } => {
-                return Some(SigData {
-                    signer,
-                    rev,
-                    sig
-                })
-            }
-            _ => continue,
-        }
-    }
-    None
 }
