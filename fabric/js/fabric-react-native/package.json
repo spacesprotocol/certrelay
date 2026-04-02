@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@spacesprotocol/fabric-core": "*",
-    "@spacesprotocol/react-native-libveritas": "0.0.0-dev.20260401061311",
+    "@spacesprotocol/react-native-libveritas": "0.0.0-dev.20260401232841",
     "uniffi-bindgen-react-native": "0.29.3-1"
   },
   "devDependencies": {
