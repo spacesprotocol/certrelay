@@ -760,27 +760,44 @@ func (f *Fabric) query(request QueryRequest) (*libveritas.VerifiedMessage, error
 }
 
 func (f *Fabric) sendQuery(ctx *libveritas.QueryContext, request QueryRequest, relays []string) (*libveritas.VerifiedMessage, error) {
+	var qParts []string
+	var hintParts []string
 	for _, q := range request.Queries {
 		ctx.AddRequest(q.Space)
+		qParts = append(qParts, q.Space)
 		for _, h := range q.Handles {
 			if h != "" {
 				ctx.AddRequest(h + q.Space)
+				qParts = append(qParts, h+q.Space)
 			}
 		}
-	}
-
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("encoding query: %w", err)
+		if q.EpochHint != nil {
+			hintParts = append(hintParts, fmt.Sprintf("%s:%s:%d", q.Space, q.EpochHint.Root, q.EpochHint.Height))
+		}
 	}
 
 	var lastErr error = &FabricError{Code: "no_peers", Message: "no peers available"}
 
 	for _, u := range relays {
-		respBytes, err := postBinary(f.client, u+"/query", body)
+		queryURL, _ := url.Parse(u + "/query")
+		params := url.Values{}
+		params.Set("q", strings.Join(qParts, ","))
+		if len(hintParts) > 0 {
+			params.Set("hints", strings.Join(hintParts, ","))
+		}
+		queryURL.RawQuery = params.Encode()
+
+		resp, err := f.client.Get(queryURL.String())
 		if err != nil {
 			f.pool.MarkFailed(u)
-			lastErr = err
+			lastErr = &FabricError{Code: "http", Message: err.Error()}
+			continue
+		}
+		respBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			f.pool.MarkFailed(u)
+			lastErr = &FabricError{Code: "relay", Status: resp.StatusCode, Message: string(respBytes)}
 			continue
 		}
 

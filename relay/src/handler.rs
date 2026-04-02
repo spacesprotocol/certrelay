@@ -94,9 +94,9 @@ impl Handler {
 
             builder.add_update(DataUpdateRequest {
                 handle: parent_cert.subject.clone(),
-                records: parent.zone.records.clone(),
+                records: Some(parent.zone.records.clone()),
                 delegate_records: if let ProvableOption::Exists {value } = parent.zone.delegate {
-                    value.records
+                    Some(value.records)
                 } else {
                     None
                 },
@@ -120,9 +120,9 @@ impl Handler {
             for handle in handle_entries {
                 builder.add_update(DataUpdateRequest {
                     handle: handle.cert.subject.clone(),
-                    records: handle.zone.records,
+                    records: Some(handle.zone.records),
                     delegate_records: if let ProvableOption::Exists {value } = handle.zone.delegate {
-                        value.records
+                        Some(value.records)
                     } else {
                         None
                     },
@@ -248,12 +248,12 @@ impl Handler {
                 let handle_str = cert.subject.to_string();
                 let zone = zone_map.get(&handle_str)?;
 
-                if let Some(ref records) = zone.records {
-                    if records.as_slice().len() > MAX_RECORDS_SIZE {
+
+                    if zone.records.as_slice().len() > MAX_RECORDS_SIZE {
                         tracing::warn!("{}: records exceed {} bytes, skipping", handle_str, MAX_RECORDS_SIZE);
                         return None;
                     }
-                    if let Some(sig) = records.sig() {
+                    if let Some(sig) = zone.records.sig() {
                         let rev_name = sig.handle.to_string();
                         if sig.flags & SIG_PRIMARY_ZONE == SIG_PRIMARY_ZONE {
                             if let Some(num_id) = &zone.num_id {
@@ -262,7 +262,7 @@ impl Handler {
                         }
                         // Collect addr records for the index
                         let mut addrs = Vec::new();
-                        for r in records.iter().filter_map(|r| r.ok()) {
+                        for r in zone.records.iter().filter_map(|r| r.ok()) {
                             if let Record::Addr { key, value } = &r {
                                 if let Some(first) = value.first() {
                                     addrs.push((key.clone(), first.clone()));
@@ -273,7 +273,7 @@ impl Handler {
                             addr_index.insert(handle_str.clone(), (rev_name, addrs));
                         }
                     }
-                }
+
 
                 let space = cert.subject.space()?.to_string();
 
@@ -287,10 +287,10 @@ impl Handler {
                     return None;
                 }
                 let epoch_height = epoch_map.get(&space).copied().unwrap_or(0);
-                let offchain_seq = zone.records.as_ref().and_then(|r| r.seq()).unwrap_or(0);
+                let offchain_seq = zone.records.seq().unwrap_or(0);
                 let delegate_offchain_seq = match &zone.delegate {
                     ProvableOption::Exists { value: d } => {
-                        d.records.as_ref().and_then(|r| r.seq()).unwrap_or(0)
+                        d.records.seq().unwrap_or(0)
                     }
                     _ => 0,
                 };

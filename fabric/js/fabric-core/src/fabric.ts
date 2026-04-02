@@ -597,11 +597,24 @@ export class Fabric {
 
     for (const url of relays) {
       try {
-        const resp = await fetch(`${url}/query`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(request),
-        });
+        // Build GET query params
+        const qParts: string[] = [];
+        const hintParts: string[] = [];
+        for (const q of request.queries) {
+          qParts.push(q.space);
+          for (const h of q.handles) {
+            if (h) qParts.push(`${h}${q.space}`);
+          }
+          if (q.epoch_hint) {
+            hintParts.push(`${q.space}:${q.epoch_hint.root}:${q.epoch_hint.height}`);
+          }
+        }
+        let queryUrl = `${url}/query?q=${encodeURIComponent(qParts.join(","))}`;
+        if (hintParts.length > 0) {
+          queryUrl += `&hints=${encodeURIComponent(hintParts.join(","))}`;
+        }
+
+        const resp = await fetch(queryUrl);
 
         if (!resp.ok) {
           const body = await resp.text();

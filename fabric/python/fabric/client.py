@@ -569,18 +569,37 @@ class Fabric:
         request: _QueryRequest,
         relays: list[str],
     ) -> lv.VerifiedMessage:
+        q_parts: list[str] = []
+        hint_parts: list[str] = []
         for q in request.queries:
             ctx.add_request(q.space)
+            q_parts.append(q.space)
             for h in q.handles:
                 if h:
                     ctx.add_request(h + q.space)
+                    q_parts.append(h + q.space)
+            if q.epoch_hint is not None:
+                hint_parts.append(
+                    f"{q.space}:{q.epoch_hint.root}:{q.epoch_hint.height}"
+                )
 
-        body = request.to_json()
         last_err: Exception = FabricError("no_peers", "no peers available")
 
         for u in relays:
             try:
-                resp_bytes = _post_binary(u + "/query", body)
+                params = {"q": ",".join(q_parts)}
+                if hint_parts:
+                    params["hints"] = ",".join(hint_parts)
+                query_url = u + "/query?" + urlencode(params)
+                req = Request(query_url)
+                with urlopen(req, timeout=10) as resp:
+                    resp_bytes = resp.read()
+                    if resp.status >= 300:
+                        self._pool.mark_failed(u)
+                        last_err = FabricError("relay", resp_bytes.decode(), resp.status)
+                        continue
+            except FabricError:
+                raise
             except Exception as e:
                 self._pool.mark_failed(u)
                 last_err = e

@@ -389,19 +389,43 @@ class Fabric(
     }
 
     private fun sendQuery(ctx: QueryContext, request: QueryRequest, relays: List<String>): VerifiedMessage {
+        val qParts = mutableListOf<String>()
+        val hintParts = mutableListOf<String>()
         for (q in request.queries) {
             ctx.addRequest(q.space)
+            qParts.add(q.space)
             for (h in q.handles) {
-                if (h.isNotEmpty()) ctx.addRequest(h + q.space)
+                if (h.isNotEmpty()) {
+                    ctx.addRequest(h + q.space)
+                    qParts.add(h + q.space)
+                }
+            }
+            if (q.epochHint != null) {
+                hintParts.add("${q.space}:${q.epochHint.root}:${q.epochHint.height}")
             }
         }
 
-        val body = json.encodeToString(request).toByteArray()
         var lastErr: Exception = FabricError("no_peers", "no peers available")
 
         for (url in relays) {
             val respBytes = try {
-                postBinary("$url/query", body)
+                val qParam = URLEncoder.encode(qParts.joinToString(","), "UTF-8")
+                var queryUrl = "$url/query?q=$qParam"
+                if (hintParts.isNotEmpty()) {
+                    val hintsParam = URLEncoder.encode(hintParts.joinToString(","), "UTF-8")
+                    queryUrl += "&hints=$hintsParam"
+                }
+                val conn = URI(queryUrl).toURL().openConnection() as HttpURLConnection
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 10_000
+                if (conn.responseCode >= 300) {
+                    val errorBody = conn.errorStream?.readBytes() ?: byteArrayOf()
+                    conn.disconnect()
+                    throw FabricError("relay", String(errorBody), conn.responseCode)
+                }
+                val data = conn.inputStream.readBytes()
+                conn.disconnect()
+                data
             } catch (e: Exception) {
                 pool.markFailed(url)
                 lastErr = e

@@ -141,7 +141,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/message", post(handle_message))
         .route("/announce", post(handle_announce))
         .route("/peers", get(handle_peers))
-        .route("/query", post(handle_query))
+        .route("/query", get(handle_query))
         .route("/anchors", get(handle_anchors))
         .route("/hints", get(handle_hints))
         .route("/chain-proof", post(handle_chain_proof))
@@ -274,40 +274,78 @@ async fn handle_peers(
 
 /// POST /query - Query for certificates.
 ///
-/// Body: JSON QueryRequest
+/// Query params:
+///   `q` — comma-separated handles (e.g. `alice@bitcoin,bob@bitcoin,@bitcoin`)
+///   `hints` — optional comma-separated epoch hints (e.g. `@bitcoin:abcdef:870000`)
 /// Returns: binary borsh-encoded Message with certificates and proofs
 async fn handle_query(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Bytes,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let ip = client_ip(&addr, &headers, &state.remote_ip_header);
     if state.limiters.query.check_key(&ip).is_err() {
         return (StatusCode::TOO_MANY_REQUESTS, vec![]).into_response();
     }
 
-    // Deserialize the JSON request
-    let request: QueryRequest = match serde_json::from_slice(&body) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("failed to deserialize query request: {}", e);
-            return (StatusCode::BAD_REQUEST, vec![]).into_response();
-        }
+    let q = match params.get("q") {
+        Some(q) if !q.is_empty() => q,
+        _ => return (StatusCode::BAD_REQUEST, "missing q parameter".as_bytes().to_vec()).into_response(),
     };
 
-    // Limit total handles across all queries
+    let handles: Vec<&str> = q.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
     const MAX_HANDLES: usize = 6;
-    let total_handles: usize = request.queries.iter()
-        .map(|q| 1 + q.handles.len()) // 1 for the space itself
-        .sum();
-    if total_handles > MAX_HANDLES {
+    if handles.len() > MAX_HANDLES {
         return (StatusCode::BAD_REQUEST, "too many handles (max 6)".as_bytes().to_vec()).into_response();
     }
 
-    // Resolve the queries - response is binary (borsh-encoded Message)
-    match state.handler.resolve(&state.chain, request.queries).await {
-        Ok(msg) => (StatusCode::OK, msg.to_bytes()).into_response(),
+    // Parse epoch hints: "space:root_hex:height,space:root_hex:height"
+    let mut hint_map: HashMap<String, EpochHint> = HashMap::new();
+    if let Some(hints_str) = params.get("hints") {
+        for part in hints_str.split(',') {
+            let segments: Vec<&str> = part.splitn(3, ':').collect();
+            if segments.len() == 3 {
+                if let Ok(height) = segments[2].parse::<u32>() {
+                    hint_map.insert(segments[0].to_string(), EpochHint {
+                        root: segments[1].to_string(),
+                        height,
+                    });
+                }
+            }
+        }
+    }
+
+    // Group handles by space
+    let mut by_space: HashMap<String, Vec<String>> = HashMap::new();
+    for handle in &handles {
+        let sep = handle.find(|c: char| c == '@' || c == '#');
+        let (space, label) = match sep {
+            Some(0) => (handle.to_string(), String::new()),
+            Some(i) => (handle[i..].to_string(), handle[..i].to_string()),
+            None => continue,
+        };
+        by_space.entry(space).or_default().push(label);
+    }
+
+    let queries: Vec<Query> = by_space
+        .into_iter()
+        .map(|(space, labels)| {
+            let filtered: Vec<String> = labels.into_iter().filter(|l| !l.is_empty()).collect();
+            let mut q = Query::new(space.clone(), filtered);
+            if let Some(hint) = hint_map.remove(&space) {
+                q = q.with_epoch_hint(hint);
+            }
+            q
+        })
+        .collect();
+
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert("cache-control", "public, max-age=300".parse().unwrap());
+
+    match state.handler.resolve(&state.chain, queries).await {
+        Ok(msg) => (resp_headers, msg.to_bytes()).into_response(),
         Err(e) => {
             tracing::warn!("failed to resolve query: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, vec![]).into_response()

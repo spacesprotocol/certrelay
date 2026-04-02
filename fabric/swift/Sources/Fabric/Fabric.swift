@@ -540,22 +540,43 @@ public final class Fabric: @unchecked Sendable {
         request: QueryRequest,
         relays: [String]
     ) async throws -> VerifiedMessage {
+        var qParts = [String]()
+        var hintParts = [String]()
         for q in request.queries {
             try ctx.addRequest(handle: q.space)
+            qParts.append(q.space)
             for handle in q.handles where !handle.isEmpty {
                 try ctx.addRequest(handle: "\(handle)\(q.space)")
+                qParts.append("\(handle)\(q.space)")
+            }
+            if let hint = q.epoch_hint {
+                hintParts.append("\(q.space):\(hint.root):\(hint.height)")
             }
         }
 
-        let body = try JSONEncoder().encode(request)
         var lastError: FabricError = .noPeers
 
         for url in relays {
             do {
-                let responseData = try await postBinary(url: "\(url)/query", body: body)
+                var components = URLComponents(string: "\(url)/query")!
+                var queryItems = [URLQueryItem(name: "q", value: qParts.joined(separator: ","))]
+                if !hintParts.isEmpty {
+                    queryItems.append(URLQueryItem(name: "hints", value: hintParts.joined(separator: ",")))
+                }
+                components.queryItems = queryItems
+                let (responseData, resp) = try await session.data(from: components.url!)
+                guard let httpResp = resp as? HTTPURLResponse, httpResp.statusCode < 300 else {
+                    let httpResp = resp as? HTTPURLResponse
+                    pool.markFailed(url)
+                    lastError = .relay(
+                        status: httpResp?.statusCode ?? 0,
+                        body: String(data: responseData, encoding: .utf8) ?? ""
+                    )
+                    continue
+                }
                 do {
                     lock.lock()
-                    let v = veritas
+                    let v = _veritas
                     lock.unlock()
                     guard let v else { throw FabricError.noPeers }
                     let msg = try Message(bytes: responseData)

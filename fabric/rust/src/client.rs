@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use libveritas::sip7::{RecordSet, SIG_PRIMARY_ZONE};
 use serde::{Deserialize, Serialize};
-use crate::{AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId};
+pub use crate::{AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId};
 use crate::seeds::SEEDS;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -503,11 +503,9 @@ impl Fabric {
             // 3. Filter to zones that actually have the matching addr record
             let matching_zones: Vec<Zone> = batch.zones.into_iter()
                 .filter(|zone| {
-                    zone.records.as_ref().is_some_and(|rs| {
-                        rs.iter().filter_map(|r| r.ok()).any(|r| {
-                            matches!(&r, libveritas::sip7::Record::Addr { key, value }
+                    zone.records.iter().filter_map(|r| r.ok()).any(|r| {
+                        matches!(&r, libveritas::sip7::Record::Addr { key, value }
                                 if key == name && value.first().map(|v| v.as_str()) == Some(addr))
-                        })
                     })
                 })
                 .collect();
@@ -667,30 +665,70 @@ impl Fabric {
         request: &QueryRequest,
         relays: &[String],
     ) -> Result<(VerifiedMessage, String)> {
-        let body = serde_json::to_vec(request)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        // Build GET query params
+        let mut q_parts: Vec<String> = Vec::new();
+        let mut hint_parts: Vec<String> = Vec::new();
+        for q in &request.queries {
+            q_parts.push(q.space.clone());
+            for h in &q.handles {
+                if !h.is_empty() {
+                    q_parts.push(format!("{}{}", h, q.space));
+                }
+            }
+            if let Some(ref hint) = q.epoch_hint {
+                hint_parts.push(format!("{}:{}:{}", q.space, hint.root, hint.height));
+            }
+        }
+        let q_param = q_parts.join(",");
+        let hints_param = hint_parts.join(",");
+
         let mut last_err = Error::NoPeers;
         for url in relays {
-            match self.post_binary(&format!("{url}/query"), &body).await {
-                Ok(bytes) => {
-                    let msg = Message::from_slice(&bytes).map_err(|e| Error::Decode(
-                        std::io::Error::new(e.kind(), format!("{url}/query: decoding message: {e}"))
-                    ))?;
-                    let options = if self.dev_mode { libveritas::VERIFY_DEV_MODE } else { 0 };
-                    match self.veritas.lock().unwrap().verify_with_options(ctx, msg, options) {
-                        Ok(res) => {
-                            self.pool.mark_alive(url);
-                            return Ok((res, url.clone()));
-                        }
-                        Err(e) => {
-                            self.pool.mark_failed(url);
-                            last_err = Error::Verify(e);
-                        }
-                    }
+            let mut req = self.http.get(&format!("{url}/query")).query(&[("q", &q_param)]);
+            if !hints_param.is_empty() {
+                req = req.query(&[("hints", &hints_param)]);
+            }
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.pool.mark_failed(url);
+                    last_err = Error::Decode(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        format!("GET {url}/query: {e}"),
+                    ));
+                    continue;
+                }
+            };
+            if !resp.status().is_success() {
+                self.pool.mark_failed(url);
+                let status = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                last_err = Error::Relay { status, body };
+                continue;
+            }
+            let bytes = match resp.bytes().await {
+                Ok(b) => b,
+                Err(e) => {
+                    self.pool.mark_failed(url);
+                    last_err = Error::Decode(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("GET {url}/query: reading response: {e}"),
+                    ));
+                    continue;
+                }
+            };
+            let msg = Message::from_slice(&bytes).map_err(|e| Error::Decode(
+                std::io::Error::new(e.kind(), format!("{url}/query: decoding message: {e}"))
+            ))?;
+            let options = if self.dev_mode { libveritas::VERIFY_DEV_MODE } else { 0 };
+            match self.veritas.lock().unwrap().verify_with_options(ctx, msg, options) {
+                Ok(res) => {
+                    self.pool.mark_alive(url);
+                    return Ok((res, url.clone()));
                 }
                 Err(e) => {
                     self.pool.mark_failed(url);
-                    last_err = e;
+                    last_err = Error::Verify(e);
                 }
             }
         }
