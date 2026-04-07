@@ -199,7 +199,7 @@ func exampleSearchAddr() error {
 	f := fabric.New()
 
 	// <doc:search-addr>
-	batch, err := f.SearchAddr("btc", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+	batch, err := f.SearchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
 	if err != nil {
 		return err
 	}
