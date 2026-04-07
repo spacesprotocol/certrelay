@@ -383,9 +383,8 @@ public final class Fabric: @unchecked Sendable {
 
             // Filter to zones that actually contain the matching addr record
             let matching = batch.zones.filter { z in
-                guard let bytes = z.records else { return false }
                 do {
-                    let rs = RecordSet(data: bytes)
+                    let rs = RecordSet(data: z.records)
                     let records = try rs.unpack()
                     return records.contains { r in
                         if case .addr(let k, let v) = r, k == name, let first = v.first, first == addr {

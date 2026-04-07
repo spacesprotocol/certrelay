@@ -14,6 +14,7 @@ typealias VerifiedMessage = org.spacesprotocol.libveritas.VerifiedMessage
 typealias Lookup = org.spacesprotocol.libveritas.Lookup
 typealias RecordSet = org.spacesprotocol.libveritas.RecordSet
 typealias Record = org.spacesprotocol.libveritas.Record
+typealias ParsedRecord = org.spacesprotocol.libveritas.ParsedRecord
 typealias DataUpdateEntry = org.spacesprotocol.libveritas.DataUpdateEntry
 typealias CommitmentState = org.spacesprotocol.libveritas.CommitmentState
 typealias DelegateState = org.spacesprotocol.libveritas.DelegateState

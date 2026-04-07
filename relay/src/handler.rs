@@ -11,7 +11,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use libveritas::builder::{DataUpdateRequest, MessageBuilder};
-use libveritas::sip7::{Error, Record, RecordSet, SIG_PRIMARY_ZONE};
+use libveritas::sip7::{Error, ParsedRecord, Record, RecordSet, SIG_PRIMARY_ZONE};
 use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorSets;
 use crate::spaced::SpacedClient;
@@ -261,14 +261,20 @@ impl Handler {
                             }
                         }
                         // Collect addr records for the index
-                        let mut addrs = Vec::new();
-                        for r in zone.records.iter().filter_map(|r| r.ok()) {
-                            if let Record::Addr { key, value } = &r {
-                                if let Some(first) = value.first() {
-                                    addrs.push((key.clone(), first.clone()));
-                                }
-                            }
-                        }
+                        let addrs: Vec<(String, String)> = zone
+                            .records
+                            .iter()
+                            .map(|rrs| {
+                                rrs.iter()
+                                    .filter_map(|r| match r {
+                                        ParsedRecord::Addr { key, value } => {
+                                            value.iter().next().map(|v| (key.to_string(), v.to_string()))
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
                         if !addrs.is_empty() {
                             addr_index.insert(handle_str.clone(), (rev_name, addrs));
                         }

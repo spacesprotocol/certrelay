@@ -1,0 +1,17 @@
+[package]
+name = "rust"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "example-rust"
+path = "src/main.rs"
+
+[workspace]
+
+
+[dependencies]
+fabric = { path = "../../../fabric/rust", features = ["client", "signing"] }
+anyhow = "1.0.102"
+tokio = "1.38.2"
+hex = "0.4.3"

@@ -19,9 +19,9 @@ dependencies {
     // compileOnly — consumers provide the right variant at runtime:
     //   Android: org.spacesprotocol:libveritas (AAR)
     //   JVM:     org.spacesprotocol:libveritas-jvm (JAR)
-    compileOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260401232452")
+    compileOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260407170200")
     // CLI needs it at runtime
-    runtimeOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260401232452")
+    runtimeOnly("org.spacesprotocol:libveritas-jvm:0.0.0-dev.20260407170200")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     compileOnly("fr.acinq.secp256k1:secp256k1-kmp:0.17.3")

@@ -147,10 +147,8 @@ type Fabric struct {
 	mu           sync.Mutex
 }
 
-func New(seeds []string) *Fabric {
-	if seeds == nil {
-		seeds = DefaultSeeds
-	}
+func New() *Fabric {
+	seeds := DefaultSeeds
 	return &Fabric{
 		client:       &http.Client{},
 		seeds:        seeds,
@@ -161,6 +159,7 @@ func New(seeds []string) *Fabric {
 
 func (f *Fabric) SetDevMode(v bool)     { f.devMode = v }
 func (f *Fabric) SetPreferLatest(v bool) { f.preferLatest = v }
+func (f *Fabric) SetSeeds(seeds []string)  { f.seeds = seeds }
 
 func (f *Fabric) Relays() []string { return f.pool.URLs() }
 
@@ -553,7 +552,7 @@ func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
 					continue
 				}
 				for _, r := range records {
-					if a, ok := r.(libveritas.RecordAddr); ok {
+					if a, ok := r.(libveritas.ParsedRecordAddr); ok {
 						if a.Key == name && len(a.Value) > 0 && a.Value[0] == addr {
 							matching = append(matching, z)
 							break
