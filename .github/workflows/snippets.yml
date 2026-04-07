@@ -1,0 +1,64 @@
+name: Extract code snippets
+
+on:
+  push:
+    paths:
+      - "fabric/examples/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract snippets
+        run: |
+          cd fabric/examples
+          mkdir -p /tmp/snippets
+
+          for lang_file in \
+            rust/src/main.rs \
+            js/index.mjs \
+            go/main.go \
+            python/example.py \
+            kotlin/Example.kt \
+            swift/Example.swift; do
+
+            lang=$(dirname "$lang_file" | cut -d/ -f1)
+            mkdir -p "/tmp/snippets/$lang"
+            ./extract-snippets.sh "$lang_file" "/tmp/snippets/$lang"
+          done
+
+          # Create index
+          echo "# Code Snippets" > /tmp/snippets/index.md
+          echo "" >> /tmp/snippets/index.md
+          for lang in rust js go python kotlin swift; do
+            echo "## $lang" >> /tmp/snippets/index.md
+            for f in /tmp/snippets/$lang/*.txt; do
+              name=$(basename "$f" .txt)
+              echo "- [$name]($lang/$name.txt)" >> /tmp/snippets/index.md
+            done
+            echo "" >> /tmp/snippets/index.md
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: /tmp/snippets
+
+  deploy:
+    needs: extract
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

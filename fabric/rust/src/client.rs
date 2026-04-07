@@ -112,8 +112,8 @@ enum TrustKind {
     Observed,
 }
 
-/// UI badge state derived from trust + sovereignty.
-pub enum VerificationBadge {
+/// UI badge status derived from trust + sovereignty.
+pub enum Badge {
     /// Sovereign handle verified against a trusted root. Show orange checkmark.
     Orange,
     /// Resolved against an observed root that differs from the trusted set.
@@ -121,6 +121,16 @@ pub enum VerificationBadge {
     Unverified,
     /// No badge. Pending, dependent, or no trust state applies.
     None,
+}
+
+impl fmt::Display for Badge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Badge::Orange => write!(f, "orange"),
+            Badge::Unverified => write!(f, "unverified"),
+            Badge::None => write!(f, "none"),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -204,21 +214,21 @@ impl Fabric {
         true
     }
 
-    pub fn badge(&self, resolved: &Resolved) -> VerificationBadge {
+    pub fn badge(&self, resolved: &Resolved) -> Badge {
         self.badge_for(resolved.zone.sovereignty, resolved.roots.as_slice())
     }
 
-    pub fn badge_for(&self, sov: SovereigntyState, roots: &[TrustId]) -> VerificationBadge {
+    pub fn badge_for(&self, sov: SovereigntyState, roots: &[TrustId]) -> Badge {
         let is_trusted = self.are_roots_trusted(roots);
         let is_observed = is_trusted || self.are_roots_observed(roots);
         let is_semi_trusted = is_trusted || self.are_roots_semi_trusted(roots);
 
         if is_trusted && matches!(sov, SovereigntyState::Sovereign) {
-            VerificationBadge::Orange
+            Badge::Orange
         } else if is_observed && !is_trusted && !is_semi_trusted {
-            VerificationBadge::Unverified
+            Badge::Unverified
         } else {
-            VerificationBadge::None
+            Badge::None
         }
     }
 
@@ -290,6 +300,11 @@ impl Fabric {
     /// Clear the trusted state. Badge will never return Orange until trust is pinned again.
     pub fn clear_trusted(&self) {
         *self.trusted.lock().unwrap() = None;
+    }
+
+    /// Clear the semi trusted state.
+    pub fn clear_semi_trusted(&self) {
+        *self.semi_trusted.lock().unwrap() = None;
     }
 
     /// Set whether to query multiple relays for freshness hints before resolving.
@@ -383,31 +398,26 @@ impl Fabric {
 
     /// Resolve a single handle and return its verified Zone.
     /// Supports dotted names like `hello.alice@bitcoin`.
-    pub async fn resolve(&self, handle: &str) -> Result<Resolved> {
+    pub async fn resolve(&self, handle: &str) -> Result<Option<Resolved>> {
         let rb = self.resolve_all(&[handle]).await?;
         let zone = rb.zones.into_iter()
-            .find(|z| z.handle.to_string() == handle)
-            .ok_or_else(|| {
-                Error::Decode(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("{handle} not found"),
-                ))
-            })?;
-        Ok(Resolved {
-            zone,
+            .find(|z| z.handle.to_string() == handle);
+        Ok(zone.map(|z| Resolved {
+            zone: z,
             roots: rb.roots,
             relays: rb.relays,
-        })
+        }))
     }
 
     /// Reverse-resolve by a num id to retrieve its human-readable name.
     ///
     /// Queries relays for the reverse mapping, resolves the forward name,
     /// and verifies the zone's num_id matches.
-    pub async fn resolve_by_id(&self, num_id: &str) -> Result<Resolved> {
+    pub async fn resolve_by_id(&self, num_id: &str) -> Result<Option<Resolved>> {
         self.bootstrap().await?;
         let relays = self.pool.shuffled_urls_n(4);
-        let mut last_err = Error::NoPeers;
+        let mut last_err: Option<Error> = None;
+        let mut any_responded = false;
 
         for url in &relays {
             // 1. Fetch reverse mapping
@@ -426,15 +436,18 @@ impl Fabric {
                 _ => continue,
             };
 
+            any_responded = true;
+
             let Some(entry) = records.iter().find(|r| r.id == num_id) else {
                 continue;
             };
 
             // 2. Resolve forward
             let resolved = match self.resolve(&entry.name).await {
-                Ok(r) => r,
+                Ok(Some(r)) => r,
+                Ok(None) => continue,
                 Err(e) => {
-                    last_err = e;
+                    last_err = Some(e);
                     continue;
                 }
             };
@@ -444,17 +457,22 @@ impl Fabric {
                 .as_ref()
                 .map(|id| id.to_string());
             if zone_num_id.as_deref() != Some(num_id) {
-                last_err = Error::Decode(std::io::Error::new(
+                last_err = Some(Error::Decode(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("reverse mismatch: expected {num_id}, got {:?}", zone_num_id),
-                ));
+                )));
                 continue;
             }
 
-            return Ok(resolved);
+            return Ok(Some(resolved));
         }
 
-        Err(last_err)
+        // If relays responded but had no mapping, assume not found
+        if any_responded && last_err.is_none() {
+            return Ok(None);
+        }
+
+        Err(last_err.unwrap_or(Error::NoPeers))
     }
 
     /// Search for handles by address record.
@@ -503,10 +521,12 @@ impl Fabric {
             // 3. Filter to zones that actually have the matching addr record
             let matching_zones: Vec<Zone> = batch.zones.into_iter()
                 .filter(|zone| {
-                    zone.records.iter().filter_map(|r| r.ok()).any(|r| {
-                        matches!(&r, libveritas::sip7::Record::Addr { key, value }
-                                if key == name && value.first().map(|v| v.as_str()) == Some(addr))
-                    })
+                    zone.records.iter()
+                        .map(|rrs| rrs.iter().any(|r| {
+                            matches!(r, libveritas::sip7::ParsedRecord::Addr { key, value }
+                                if key == name && value.iter().next() == Some(addr))
+                        }))
+                        .unwrap_or(false)
                 })
                 .collect();
 
@@ -1143,6 +1163,15 @@ async fn fetch_latest_trust_id(http: &reqwest::Client, peers: &[String]) -> Resu
                 continue;
             }
         };
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            last_err = Some(Error::Relay {
+                status,
+                body: format!("HEAD {url}/anchors: {status}"),
+            });
+            continue;
+        }
 
         let root = resp
             .headers()

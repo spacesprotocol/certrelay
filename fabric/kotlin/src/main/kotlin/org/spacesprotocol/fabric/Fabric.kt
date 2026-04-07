@@ -285,7 +285,7 @@ class Fabric(
                     try {
                         val rs = RecordSet(bytes)
                         rs.unpack().any { r ->
-                            r is Record.Addr && r.key == name && r.value.isNotEmpty() && r.value[0] == addr
+                            r is ParsedRecord.Addr && r.key == name && r.value.isNotEmpty() && r.value[0] == addr
                         }
                     } catch (_: Exception) { false }
                 } ?: false
