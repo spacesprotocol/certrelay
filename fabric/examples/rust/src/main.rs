@@ -162,7 +162,7 @@ async fn example_search_addr() -> anyhow::Result<()> {
 
     // <doc:search-addr>
     let batch = fabric
-        .search_addr("btc", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+        .search_addr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
         .await?;
 
     for zone in &batch.zones {

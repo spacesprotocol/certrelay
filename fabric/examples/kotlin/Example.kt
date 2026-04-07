@@ -145,7 +145,7 @@ suspend fun exampleSearchAddr() {
     val fabric = Fabric()
 
     // <doc:search-addr>
-    val batch = fabric.searchAddr("btc", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+    val batch = fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
 
     for (zone in batch.zones) {
         println("${zone.handle}: ${zone.sovereignty}")
