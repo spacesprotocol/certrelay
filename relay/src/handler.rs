@@ -132,7 +132,7 @@ impl Handler {
         }
         let chain = chain.prove(&builder.chain_proof_request()).await?;
         let (msg, unsigned) = builder.build(chain)?;
-        if !unsigned.is_empty() {
+        if !unsigned.is_empty() && unsigned.iter().all(|u| !u.records.is_empty()) {
             let missing_sigs = unsigned.iter().map(|u| u.canonical.to_string())
                 .collect::<Vec<_>>().join(", ");
 
