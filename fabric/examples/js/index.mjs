@@ -1,6 +1,13 @@
 import { Fabric, RecordSet, Record, MessageBuilder } from "@spacesprotocol/fabric-web";
 import { signSchnorr } from "@spacesprotocol/fabric-web/signing";
 
+async function exampleResolveIntro() {
+    // <doc:resolve-intro>
+    const fabric = new Fabric();
+    const resolved = await fabric.resolve("alice@bitcoin");
+    // </doc:resolve-intro>
+}
+
 /// Resolve a single handle
 async function exampleResolve() {
     // <doc:resolve>
@@ -100,9 +107,6 @@ function examplePackRecords() {
 /// Publish signed records
 async function examplePublish() {
     const fabric = new Fabric();
-    const secretKey = new Uint8Array(Buffer.from(
-        "0000000000000000000000000000000000000000000000000000000000000001", "hex"
-    ));
 
     const rs = RecordSet.pack([
         Record.seq(1n),
@@ -114,8 +118,8 @@ async function examplePublish() {
     const cert = await fabric.export("alice@bitcoin");
     await fabric.publish({
         cert,
-        records: rs.toBytes(),
-        sign: (digest) => signSchnorr(digest, secretKey),
+        records: rs,
+        secretKey: "0000000000000000000000000000000000000000000000000000000000000001",
         primary: true,
     });
     // </doc:publish>

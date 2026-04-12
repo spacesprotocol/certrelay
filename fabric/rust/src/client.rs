@@ -1,6 +1,5 @@
-use libveritas::builder::MessageBuilder;
 use libveritas::cert::CertificateChain;
-use libveritas::msg::{ChainProof, QueryContext};
+use libveritas::msg::{QueryContext};
 use libveritas::spaces_protocol::sname::{NameLike, SName};
 use libveritas::{compute_trust_set, MessageError, ProvableOption, SovereigntyState, TrustSet, VerifiedMessage, Veritas, Zone};
 use rand::seq::SliceRandom;
@@ -9,10 +8,16 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use libveritas::sip7::{RecordSet, SIG_PRIMARY_ZONE};
 use serde::{Deserialize, Serialize};
 pub use crate::{AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId};
 use crate::seeds::SEEDS;
+
+#[cfg(feature = "signing")]
+use libveritas::{
+    builder::MessageBuilder,
+    msg::ChainProof,
+    sip7::{SIG_PRIMARY_ZONE, RecordSet}
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -522,7 +527,7 @@ impl Fabric {
             let matching_zones: Vec<Zone> = batch.zones.into_iter()
                 .filter(|zone| {
                     zone.records.iter()
-                        .map(|rrs| rrs.iter().any(|r| {
+                        .map(|mut rrs| rrs.any(|r| {
                             matches!(r, libveritas::sip7::ParsedRecord::Addr { key, value }
                                 if key == name && value.iter().next() == Some(addr))
                         }))
@@ -971,31 +976,6 @@ impl Fabric {
     /// Returns a clone of the internal Veritas instance for offline verification.
     pub fn veritas(&self) -> Veritas {
         self.veritas.lock().unwrap().clone()
-    }
-
-    async fn post_binary(&self, url: &str, body: &[u8]) -> Result<Vec<u8>> {
-        let resp = self
-            .http
-            .post(url)
-            .body(body.to_vec())
-            .header("content-type", "application/octet-stream")
-            .send()
-            .await
-            .map_err(|e| Error::Decode(std::io::Error::new(
-                std::io::ErrorKind::ConnectionRefused,
-                format!("POST {url}: {e}"),
-            )))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Relay { status, body });
-        }
-
-        resp.bytes().await.map(|b| b.to_vec()).map_err(|e| Error::Decode(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("POST {url}: reading response: {e}"),
-        )))
     }
 }
 

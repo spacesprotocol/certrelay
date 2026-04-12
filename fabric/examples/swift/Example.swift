@@ -1,5 +1,12 @@
 import Fabric
 
+func exampleResolveIntro() async throws {
+    // <doc:resolve-intro>
+    let fabric = Fabric()
+    let resolved = try await fabric.resolve("alice@bitcoin")
+    // </doc:resolve-intro>
+}
+
 /// Resolve a single handle
 func exampleResolve() async throws {
     // <doc:resolve>

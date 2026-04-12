@@ -9,6 +9,18 @@ import (
 	lv "github.com/spacesprotocol/libveritas-go"
 )
 
+func exampleResolveIntro() error {
+	// <doc:resolve-intro>
+	f := fabric.New()
+	resolved, err := f.Resolve("alice@bitcoin")
+	// </doc:resolve-intro>
+	if err != nil {
+		return err
+	}
+	_ = resolved
+	return nil
+}
+
 /// Resolve a single handle
 func exampleResolve() error {
 	// <doc:resolve>

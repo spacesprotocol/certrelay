@@ -5,6 +5,16 @@ use fabric::libveritas::msg::ChainProof;
 use fabric::libveritas::sip7::{ParsedRecord, Record, RecordSet, SIG_PRIMARY_ZONE};
 use fabric::signing::sign_schnorr;
 
+async fn example_resolve_intro() -> anyhow::Result<()> {
+    // <doc:resolve-intro>
+    let fabric = Fabric::new();
+    let resolved = fabric.resolve("alice@bitcoin").await?;
+    // </doc:resolve-intro>
+    let _ = resolved;
+    Ok(())
+}
+
+
 /// Resolve a single handle
 async fn example_resolve() -> anyhow::Result<()> {
     // <doc:resolve>
