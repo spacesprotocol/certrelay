@@ -76,7 +76,7 @@ async fn example_unpack_records() -> anyhow::Result<()> {
     let resolved = fabric.resolve("alice@bitcoin").await?.expect("handle exists");
 
     // <doc:unpack-records>
-    for record in resolved.zone.records.unpack()? {
+    for record in resolved.zone.records.iter()? {
         match record {
             ParsedRecord::Txt { key, value } => {
                 println!("txt {}={}", key, value.to_vec().join(", "))
