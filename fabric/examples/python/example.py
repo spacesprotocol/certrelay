@@ -4,6 +4,13 @@ from fabric import Fabric, RecordSet, Record, sign_schnorr
 from fabric import CertificateChain, MessageBuilder, ChainProof, SIG_PRIMARY_ZONE
 
 
+async def example_resolve_intro():
+    # <doc:resolve-intro>
+    fabric = Fabric()
+    resolved = await fabric.resolve("alice@bitcoin")
+    # </doc:resolve-intro>
+
+
 async def example_resolve():
     """Resolve a single handle"""
     # <doc:resolve>

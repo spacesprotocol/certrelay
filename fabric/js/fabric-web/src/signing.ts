@@ -1,4 +1,5 @@
 import { schnorr } from "@noble/curves/secp256k1";
+import { Fabric as FabricCore } from "@spacesprotocol/fabric-core";
 
 /**
  * Sign a 32-byte digest using BIP-340 Schnorr.
@@ -24,3 +25,6 @@ export function verifySchnorr(
 ): boolean {
   return schnorr.verify(signature, digest, pubkey);
 }
+
+// Auto-register signer so publish()/sign() work without a callback
+FabricCore.registerSigner(signSchnorr);

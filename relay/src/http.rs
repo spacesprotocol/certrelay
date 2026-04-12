@@ -401,7 +401,10 @@ async fn handle_anchors(
     };
 
     match set {
-        Some(resp) => (headers, axum::Json(resp)).into_response(),
+        Some(resp) => {
+            headers.insert("cache-control", "public, max-age=300".parse().unwrap());
+            (headers, axum::Json(resp)).into_response()
+        }
         None => (StatusCode::NOT_FOUND, headers, "anchor set not found").into_response(),
     }
 }
@@ -432,7 +435,11 @@ async fn handle_hints(
     }
 
     match state.handler.hints(&mut handles) {
-        Ok(res) => axum::Json(res).into_response(),
+        Ok(res) => {
+            let mut headers = HeaderMap::new();
+            headers.insert("cache-control", "public, max-age=300".parse().unwrap());
+            (headers, axum::Json(res)).into_response()
+        }
         Err(e) => {
             tracing::warn!("hints failed: {}", e);
             (StatusCode::BAD_REQUEST, e.to_string()).into_response()
@@ -466,7 +473,11 @@ async fn handle_reverse(
     }
 
     match state.handler.store.get_revs(&id_list) {
-        Ok(records) => axum::Json(records).into_response(),
+        Ok(records) => {
+            let mut headers = HeaderMap::new();
+            headers.insert("cache-control", "public, max-age=300".parse().unwrap());
+            (headers, axum::Json(records)).into_response()
+        }
         Err(e) => {
             tracing::warn!("reverse lookup failed: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "lookup failed").into_response()
@@ -502,10 +513,12 @@ async fn handle_addrs(
             let handles = pairs.into_iter()
                 .map(|(handle, rev)| resolver::AddrEntry { handle, rev })
                 .collect();
-            axum::Json(resolver::AddrMatch {
+            let mut headers = HeaderMap::new();
+            headers.insert("cache-control", "public, max-age=300".parse().unwrap());
+            (headers, axum::Json(resolver::AddrMatch {
                 address: address.clone(),
                 handles,
-            }).into_response()
+            })).into_response()
         }
         Err(e) => {
             tracing::warn!("addr lookup failed: {}", e);

@@ -7,6 +7,13 @@ import org.spacesprotocol.fabric.MessageBuilder
 import org.spacesprotocol.fabric.ChainProof
 import org.spacesprotocol.fabric.SIG_PRIMARY_ZONE
 
+suspend fun exampleResolveIntro() {
+    // <doc:resolve-intro>
+    val fabric = Fabric()
+    val resolved = fabric.resolve("alice@bitcoin")
+    // </doc:resolve-intro>
+}
+
 /// Resolve a single handle
 suspend fun exampleResolve() {
     // <doc:resolve>

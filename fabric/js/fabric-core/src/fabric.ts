@@ -70,6 +70,22 @@ function toHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function parseSecretKey(key: string | Uint8Array): Uint8Array {
+  if (key instanceof Uint8Array) return key;
+  if (typeof key === "string" && /^[0-9a-fA-F]{64}$/.test(key)) {
+    return hexToBytes(key);
+  }
+  throw new FabricError("secretKey must be 32-byte Uint8Array or 64-char hex string", "decode");
+}
+
 /**
  * Certrelay client for JavaScript/TypeScript.
  *
@@ -88,7 +104,19 @@ function toHex(bytes: Uint8Array): string {
  * const fabric = new Fabric({ provider: reactNativeProvider({ Veritas, VeritasAnchors, VeritasQueryContext }) });
  * ```
  */
+export type SignSchnorrFn = (digest: Uint8Array, secretKey: Uint8Array) => Uint8Array;
+
 export class Fabric {
+  private static _signSchnorr: SignSchnorrFn | null = null;
+
+  /**
+   * Register a Schnorr signing function. Called automatically when
+   * `@spacesprotocol/fabric-web/signing` is imported.
+   */
+  static registerSigner(fn: SignSchnorrFn): void {
+    Fabric._signSchnorr = fn;
+  }
+
   private provider: VeritasProvider;
   private pool = new RelayPool();
   private veritas: VeritasHandle | null = null;
@@ -234,21 +262,35 @@ export class Fabric {
   /**
    * Build and sign a message ready for broadcasting.
    *
+   * Requires the signing module to be loaded first:
+   * ```ts
+   * import "@spacesprotocol/fabric-web/signing";
+   * ```
+   *
    * @param opts.cert - Certificate bytes (.spacecert)
-   * @param opts.records - RecordSet bytes (from RecordSet.pack().toBytes())
-   * @param opts.sign - Signs a 32-byte digest, returns 64-byte Schnorr signature
+   * @param opts.records - RecordSet or raw bytes
+   * @param opts.secretKey - 32-byte secret key as Uint8Array or 64-char hex string
    * @param opts.primary - Set SIG_PRIMARY_ZONE flag for num id reverse mapping (default: true)
    * @returns Signed message bytes ready for broadcast()
    */
   async sign(opts: {
     cert: Uint8Array;
-    records: Uint8Array;
-    sign: (signingId: Uint8Array) => Uint8Array | Promise<Uint8Array>;
+    records: Uint8Array | { toBytes(): Uint8Array };
+    secretKey: string | Uint8Array;
     primary?: boolean;
   }): Promise<Uint8Array> {
+    if (!Fabric._signSchnorr) {
+      throw new FabricError(
+        "signing module not loaded. Import '@spacesprotocol/fabric-web/signing' first.",
+        "decode",
+      );
+    }
     await this.bootstrap();
 
-    const { cert, records, sign, primary = true } = opts;
+    const { cert, primary = true } = opts;
+    const records = opts.records instanceof Uint8Array ? opts.records : opts.records.toBytes();
+    const key = parseSecretKey(opts.secretKey);
+    const signFn = Fabric._signSchnorr;
 
     const builder = this.provider.createMessageBuilder();
     builder.addHandle(cert, records);
@@ -263,7 +305,7 @@ export class Fabric {
       if (primary) {
         u.setFlags(u.flags() | 0x01); // SIG_PRIMARY_ZONE
       }
-      const sig = await sign(u.signingId());
+      const sig = signFn(u.signingId(), key);
       const signed = u.packSig(sig);
       message.setRecords(u.canonical(), signed);
     }
@@ -274,15 +316,20 @@ export class Fabric {
   /**
    * Build, sign, and broadcast a message.
    *
+   * Requires the signing module to be loaded first:
+   * ```ts
+   * import "@spacesprotocol/fabric-web/signing";
+   * ```
+   *
    * @param opts.cert - Certificate bytes (.spacecert)
-   * @param opts.records - RecordSet bytes (from RecordSet.pack().toBytes())
-   * @param opts.sign - Signs a 32-byte digest, returns 64-byte Schnorr signature
+   * @param opts.records - RecordSet or raw bytes
+   * @param opts.secretKey - 32-byte secret key as Uint8Array or 64-char hex string
    * @param opts.primary - Set SIG_PRIMARY_ZONE flag for num id reverse mapping (default: true)
    */
   async publish(opts: {
     cert: Uint8Array;
-    records: Uint8Array;
-    sign: (signingId: Uint8Array) => Uint8Array | Promise<Uint8Array>;
+    records: Uint8Array | { toBytes(): Uint8Array };
+    secretKey: string | Uint8Array;
     primary?: boolean;
   }): Promise<void> {
     const msg = await this.sign(opts);

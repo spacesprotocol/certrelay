@@ -11,7 +11,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use libveritas::builder::{DataUpdateRequest, MessageBuilder};
-use libveritas::sip7::{Error, ParsedRecord, Record, RecordSet, SIG_PRIMARY_ZONE};
+use libveritas::sip7::{ParsedRecord, SIG_PRIMARY_ZONE};
 use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorSets;
 use crate::spaced::SpacedClient;
@@ -265,8 +265,7 @@ impl Handler {
                             .records
                             .iter()
                             .map(|rrs| {
-                                rrs.iter()
-                                    .filter_map(|r| match r {
+                                rrs.filter_map(|r| match r {
                                         ParsedRecord::Addr { key, value } => {
                                             value.iter().next().map(|v| (key.to_string(), v.to_string()))
                                         }

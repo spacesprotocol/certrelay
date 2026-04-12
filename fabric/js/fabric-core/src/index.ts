@@ -6,6 +6,7 @@ export type {
   Resolved,
   ResolvedBatch,
   ScanParams,
+  SignSchnorrFn,
 } from "./fabric.js";
 export { RelayPool } from "./pool.js";
 export { compareHints } from "./hints.js";
