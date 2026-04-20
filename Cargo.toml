@@ -3,7 +3,7 @@ resolver = "2"
 members = ["fabric", "relay", "tests"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -12,7 +12,7 @@ homepage = "https://spacesprotocol.org"
 authors = ["Buffrr <contact@buffrr.dev>"]
 
 [workspace.dependencies]
-fabric-resolver = { path = "fabric", version = "0.1.2" }
+fabric-resolver = { path = "fabric", version = "0.1.3" }
 libveritas = { version = "0.1" }
 libveritas_testutil = { version = "0.1" }
 
