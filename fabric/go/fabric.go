@@ -428,25 +428,26 @@ func (f *Fabric) updateAnchors(trustID string, kind trustKind) error {
 	return nil
 }
 
-// Resolve a single handle. Supports dotted names like "hello.alice@bitcoin".
-func (f *Fabric) Resolve(handle string) (Resolved, error) {
+// Resolve a single handle. Returns nil if not found. Supports dotted names like "hello.alice@bitcoin".
+func (f *Fabric) Resolve(handle string) (*Resolved, error) {
 	batch, err := f.ResolveAll([]string{handle})
 	if err != nil {
-		return Resolved{}, err
+		return nil, err
 	}
 	for _, z := range batch.Zones {
 		if z.Handle == handle {
-			return Resolved{Zone: z, Roots: batch.Roots}, nil
+			return &Resolved{Zone: z, Roots: batch.Roots}, nil
 		}
 	}
-	return Resolved{}, &FabricError{Code: "decode", Message: handle + " not found"}
+	return nil, nil
 }
 
 // ResolveById resolves a numeric ID to a handle by querying relays
 // for the reverse mapping, then verifying via forward resolution.
-func (f *Fabric) ResolveById(numId string) (Resolved, error) {
+// Returns nil if not found.
+func (f *Fabric) ResolveById(numId string) (*Resolved, error) {
 	if err := f.Bootstrap(); err != nil {
-		return Resolved{}, err
+		return nil, err
 	}
 	urls := f.pool.ShuffledURLs(4)
 	var lastErr error = &FabricError{Code: "no_peers", Message: "reverse resolution failed"}
@@ -486,6 +487,9 @@ func (f *Fabric) ResolveById(numId string) (Resolved, error) {
 			lastErr = err
 			continue
 		}
+		if resolved == nil {
+			continue
+		}
 
 		if resolved.Zone.NumId == nil || *resolved.Zone.NumId != numId {
 			lastErr = &FabricError{Code: "verify", Message: fmt.Sprintf("reverse mismatch: expected %s", numId)}
@@ -494,7 +498,7 @@ func (f *Fabric) ResolveById(numId string) (Resolved, error) {
 
 		return resolved, nil
 	}
-	return Resolved{}, lastErr
+	return nil, lastErr
 }
 
 // SearchAddr searches for handles by address record, verifies via forward resolution.

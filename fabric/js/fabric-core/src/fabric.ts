@@ -427,12 +427,12 @@ export class Fabric {
 
   // ── Resolution ──
 
-  /** Resolve a single handle. Supports nested names like `hello.alice@bitcoin`. */
-  async resolve(handle: string): Promise<Resolved> {
+  /** Resolve a single handle. Returns null if not found. Supports nested names like `hello.alice@bitcoin`. */
+  async resolve(handle: string): Promise<Resolved | null> {
     const batch = await this.resolveAll([handle]);
     const zone = batch.zones.find((z) => z.handle === handle);
     if (!zone) {
-      throw new FabricError(`${handle} not found`, "decode");
+      return null;
     }
     return { zone, roots: batch.roots };
   }
@@ -451,13 +451,14 @@ export class Fabric {
         const entry = records.find(r => r.id === numId);
         if (!entry) continue;
 
-        let resolved: Resolved;
+        let resolved: Resolved | null;
         try {
           resolved = await this.resolve(entry.name);
         } catch (e) {
           lastErr = e instanceof Error ? e : new FabricError(String(e), "decode");
           continue;
         }
+        if (!resolved) continue;
 
         const json = resolved.zone.toJson();
         if (json?.num_id !== numId) {

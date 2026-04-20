@@ -219,15 +219,15 @@ class Fabric:
             return BADGE_UNVERIFIED
         return BADGE_NONE
 
-    def resolve(self, handle: str) -> Resolved:
+    def resolve(self, handle: str) -> Resolved | None:
         batch = self.resolve_all([handle])
         zone = next((z for z in batch.zones if z.handle == handle), None)
         if zone is None:
-            raise FabricError("decode", f"{handle} not found")
+            return None
         return Resolved(zone=zone, roots=batch.roots)
 
-    def resolve_by_id(self, num_id: str) -> Resolved:
-        """Resolve a numeric ID to a verified handle."""
+    def resolve_by_id(self, num_id: str) -> Resolved | None:
+        """Resolve a numeric ID to a verified handle. Returns None if not found."""
         self.bootstrap()
         urls = self._pool.shuffled_urls(4)
         last_err: Exception = FabricError("no_peers", "reverse resolution failed")
@@ -249,10 +249,8 @@ class Fabric:
             if entry is None:
                 continue
 
-            try:
-                resolved = self.resolve(entry["name"])
-            except Exception as e:
-                last_err = e
+            resolved = self.resolve(entry["name"])
+            if resolved is None:
                 continue
 
             if getattr(resolved.zone, "num_id", None) != num_id:
@@ -262,7 +260,7 @@ class Fabric:
             self._pool.mark_alive(u)
             return resolved
 
-        raise last_err
+        return None
 
     def search_addr(self, name: str, addr: str) -> ResolvedBatch:
         """Search for handles by address record, verify via forward resolution."""

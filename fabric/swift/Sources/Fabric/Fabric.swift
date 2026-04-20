@@ -322,17 +322,17 @@ public final class Fabric: @unchecked Sendable {
 
     // MARK: - Resolution
 
-    /// Resolve a single handle. Supports dotted names like `hello.alice@bitcoin`.
-    public func resolve(_ handle: String) async throws -> Resolved {
+    /// Resolve a single handle. Returns nil if not found. Supports dotted names like `hello.alice@bitcoin`.
+    public func resolve(_ handle: String) async throws -> Resolved? {
         let batch = try await resolveAll([handle])
         guard let zone = batch.zones.first(where: { $0.handle == handle }) else {
-            throw FabricError.decode("\(handle) not found")
+            return nil
         }
         return Resolved(zone: zone, roots: batch.roots)
     }
 
-    /// Resolve a numeric ID to a verified handle.
-    public func resolveById(_ numId: String) async throws -> Resolved {
+    /// Resolve a numeric ID to a verified handle. Returns nil if not found.
+    public func resolveById(_ numId: String) async throws -> Resolved? {
         try await bootstrap()
         let relays = pool.shuffledUrls(4)
 
@@ -347,16 +347,13 @@ public final class Fabric: @unchecked Sendable {
 
             guard let entry = entries.first(where: { $0.id == numId }) else { continue }
 
-            let resolved: Resolved
-            do {
-                resolved = try await resolve(entry.name)
-            } catch { continue }
+            guard let resolved = try await resolve(entry.name) else { continue }
 
             guard resolved.zone.numId == numId else { continue }
             return resolved
         }
 
-        throw FabricError.noPeers
+        return nil
     }
 
     /// Search for handles by address record, verify via forward resolution.
