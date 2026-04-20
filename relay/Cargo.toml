@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 libveritas = { workspace = true }
-resolver = { path = "../fabric/rust", package = "fabric-resolver", default-features = false }
+resolver = { path = "../fabric", package = "fabric-resolver", default-features = false }
 spaces_protocol = { workspace = true }
 spaces_client = { workspace = true }
 spaces_nums = { workspace = true }
