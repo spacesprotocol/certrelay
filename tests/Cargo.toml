@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 relay = { path = "../relay", features = ["testutil"] }
 axum = "0.8"
-fabric = { path = "../fabric/rust", package = "fabric-resolver" }
+fabric = { path = "../fabric", package = "fabric-resolver" }
 libveritas = { workspace = true }
 libveritas_testutil = { workspace = true }
 spaces_protocol = { workspace = true }

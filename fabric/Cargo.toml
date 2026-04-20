@@ -14,10 +14,11 @@ categories = ["network-programming"]
 
 [lib]
 name = "fabric"
+path = "rust/src/lib.rs"
 
 [[bin]]
 name = "fabric"
-path = "src/main.rs"
+path = "rust/src/main.rs"
 required-features = ["client"]
 
 [features]
