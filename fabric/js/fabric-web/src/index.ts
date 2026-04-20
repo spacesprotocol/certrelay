@@ -7,8 +7,13 @@ import * as libveritas from "@spacesprotocol/libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
 
-const wasmInit: (() => Promise<any>) | undefined =
-  (libveritas as any).default ?? (libveritas as any).init ?? (libveritas as any).__wbg_init;
+const wasmInit: (() => Promise<any>) | undefined = (() => {
+  const d = (libveritas as any).default;
+  if (typeof d === "function") return d;
+  if (typeof (libveritas as any).__wbg_init === "function") return (libveritas as any).__wbg_init;
+  // No async init needed — module self-initializes on import
+  return undefined;
+})();
 
 let wasmReady: Promise<void> | null = null;
 
