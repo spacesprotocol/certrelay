@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "fabric-v*"
-    paths:
-      - "fabric/examples/**"
   workflow_dispatch:
 
 permissions:
