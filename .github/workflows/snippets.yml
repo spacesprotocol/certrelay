@@ -26,7 +26,7 @@ jobs:
             echo "version=latest" >> "$GITHUB_OUTPUT"
           fi
           # Pull libveritas version from what we actually depend on
-          LV_VERSION=$(grep 'libveritas-jvm' fabric/kotlin/build.gradle.kts | head -1 | sed 's/.*:\([0-9][^"]*\).*/\1/')
+          LV_VERSION=$(grep 'libveritas-jvm:[0-9]' fabric/kotlin/build.gradle.kts | head -1 | sed 's/.*:\([0-9][^"]*\).*/\1/')
           echo "lv_version=$LV_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Extract snippets
@@ -36,9 +36,9 @@ jobs:
 
           # Replace version placeholders in example files
           find fabric/examples -type f \( -name "*.rs" -o -name "*.mjs" -o -name "*.go" -o -name "*.py" -o -name "*.kt" -o -name "*.swift" \) \
-            -exec sed -i "s/{{VERSION}}/$VERSION/g" {} + && \
+            -exec sed -i "s|{{VERSION}}|$VERSION|g" {} + && \
           find fabric/examples -type f \( -name "*.rs" -o -name "*.mjs" -o -name "*.go" -o -name "*.py" -o -name "*.kt" -o -name "*.swift" \) \
-            -exec sed -i "s/{{LV_VERSION}}/$LV_VERSION/g" {} +
+            -exec sed -i "s|{{LV_VERSION}}|$LV_VERSION|g" {} +
 
           cd fabric/examples
           mkdir -p /tmp/snippets
