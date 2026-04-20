@@ -1,3 +1,7 @@
+// <doc:install>
+// .package(url: "https://github.com/spacesprotocol/fabric-swift.git", from: "{{VERSION}}")
+// </doc:install>
+
 import Fabric
 
 func exampleResolveIntro() async throws {

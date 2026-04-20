@@ -1,5 +1,9 @@
 package main
 
+// <doc:install>
+// go get github.com/spacesprotocol/fabric-go
+// </doc:install>
+
 import (
 	"encoding/hex"
 	"fmt"

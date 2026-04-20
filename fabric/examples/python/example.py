@@ -1,3 +1,7 @@
+# <doc:install>
+# pip install fabric-resolver
+# </doc:install>
+
 import asyncio
 
 from fabric import Fabric, RecordSet, Record, sign_schnorr

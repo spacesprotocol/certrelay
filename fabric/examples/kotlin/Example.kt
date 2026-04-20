@@ -1,3 +1,13 @@
+// <doc:install-kotlin-jvm>
+// implementation("org.spacesprotocol:fabric:{{VERSION}}")
+// implementation("org.spacesprotocol:libveritas-jvm:{{LV_VERSION}}")
+// </doc:install-kotlin-jvm>
+
+// <doc:install-kotlin-android>
+// implementation("org.spacesprotocol:fabric:{{VERSION}}")
+// implementation("org.spacesprotocol:libveritas:{{LV_VERSION}}")
+// </doc:install-kotlin-android>
+
 import org.spacesprotocol.fabric.Fabric
 import org.spacesprotocol.fabric.RecordSet
 import org.spacesprotocol.fabric.Record

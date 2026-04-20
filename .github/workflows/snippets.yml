@@ -2,6 +2,8 @@ name: Extract code snippets
 
 on:
   push:
+    tags:
+      - "fabric-v*"
     paths:
       - "fabric/examples/**"
   workflow_dispatch:
@@ -17,8 +19,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Determine versions
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/fabric-v* ]]; then
+            echo "version=${GITHUB_REF_NAME#fabric-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=latest" >> "$GITHUB_OUTPUT"
+          fi
+          # Pull libveritas version from what we actually depend on
+          LV_VERSION=$(grep 'libveritas-jvm' fabric/kotlin/build.gradle.kts | head -1 | sed 's/.*:\([0-9][^"]*\).*/\1/')
+          echo "lv_version=$LV_VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Extract snippets
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          LV_VERSION="${{ steps.version.outputs.lv_version }}"
+
+          # Replace version placeholders in example files
+          find fabric/examples -type f \( -name "*.rs" -o -name "*.mjs" -o -name "*.go" -o -name "*.py" -o -name "*.kt" -o -name "*.swift" \) \
+            -exec sed -i "s/{{VERSION}}/$VERSION/g" {} + && \
+          find fabric/examples -type f \( -name "*.rs" -o -name "*.mjs" -o -name "*.go" -o -name "*.py" -o -name "*.kt" -o -name "*.swift" \) \
+            -exec sed -i "s/{{LV_VERSION}}/$LV_VERSION/g" {} +
+
           cd fabric/examples
           mkdir -p /tmp/snippets
 
