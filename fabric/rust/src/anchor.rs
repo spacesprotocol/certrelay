@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use crate::{AnchorSet, TrustId};
 use libveritas::compute_trust_set;
 use spaces_nums::RootAnchor;
-use crate::{AnchorSet, TrustId};
+use std::collections::HashMap;
 
 const ANCHOR_SET_SIZE: usize = 60;
 
@@ -25,8 +25,8 @@ impl AnchorSets {
     }
 
     pub fn latest(&self) -> Option<&AnchorSet> {
-        self.sets.values().max_by_key(|s| {
-            s.entries.last().map(|a| a.block.height).unwrap_or(0)
-        })
+        self.sets
+            .values()
+            .max_by_key(|s| s.entries.last().map(|a| a.block.height).unwrap_or(0))
     }
 }

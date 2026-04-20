@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use resolver::{capabilities, PeerInfo};
+pub use resolver::{PeerInfo, capabilities};
 
 pub struct PeerTable {
     /// IP -> announced URL (one slot per IP)
@@ -83,26 +83,26 @@ impl PeerTable {
         let now = Instant::now();
 
         // Already verified and fresh? Just refresh.
-        if let Some(peer) = self.verified.get_mut(&url) {
-            if now.duration_since(peer.last_seen) < self.config.verified_ttl {
-                peer.last_seen = now;
-                peer.capabilities = capabilities;
-                return AnnounceResult::AlreadyVerified;
-            }
+        if let Some(peer) = self.verified.get_mut(&url)
+            && now.duration_since(peer.last_seen) < self.config.verified_ttl
+        {
+            peer.last_seen = now;
+            peer.capabilities = capabilities;
+            return AnnounceResult::AlreadyVerified;
         }
 
         // Remove this IP's previous announcement if it was a different URL
-        if let Some(old_url) = self.ip_slots.get(&source_ip) {
-            if *old_url != url {
-                let old_url = old_url.clone();
-                // Remove old URL from unverified if no other IP points to it
-                let other_refs = self
-                    .ip_slots
-                    .iter()
-                    .any(|(ip, u)| *ip != source_ip && *u == old_url);
-                if !other_refs {
-                    self.unverified.remove(&old_url);
-                }
+        if let Some(old_url) = self.ip_slots.get(&source_ip)
+            && *old_url != url
+        {
+            let old_url = old_url.clone();
+            // Remove old URL from unverified if no other IP points to it
+            let other_refs = self
+                .ip_slots
+                .iter()
+                .any(|(ip, u)| *ip != source_ip && *u == old_url);
+            if !other_refs {
+                self.unverified.remove(&old_url);
             }
         }
 
@@ -242,7 +242,8 @@ impl PeerTable {
     /// Move expired verified peers back to unverified so they can be re-checked.
     pub fn demote_expired(&mut self) {
         let now = Instant::now();
-        let expired: Vec<(String, PeerEntry)> = self.verified
+        let expired: Vec<(String, PeerEntry)> = self
+            .verified
             .extract_if(|_, e| now.duration_since(e.last_seen) >= self.config.verified_ttl)
             .collect();
         for (url, entry) in expired {

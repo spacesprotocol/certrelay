@@ -1,7 +1,8 @@
 [package]
 name = "relay"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [[bin]]
 name = "certrelay"
@@ -10,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 libveritas = { workspace = true }
-resolver = { path = "../fabric/rust", package = "fabric", default-features = false }
+resolver = { path = "../fabric/rust", package = "fabric-rs", default-features = false }
 spaces_protocol = { workspace = true }
 spaces_client = { workspace = true }
 spaces_nums = { workspace = true }
@@ -27,7 +28,7 @@ tokio = { version = "1.37", features = ["sync", "rt-multi-thread", "macros"] }
 rand = "0.9"
 sha2 = "0.10"
 tracing = "0.1"
-yuki = {git = "https://github.com/imperviousinc/yuki.git" }
+yuki = { version = "0.0.1", package = "bitcoin_yuki" }
 env_logger = "0.11.9"
 hex = "0.4.3"
 tower-http = { version = "0.6", features = ["cors"] }

@@ -3,7 +3,7 @@ name: Publish JS packages
 on:
   push:
     tags:
-      - "v*"
+      - "fabric-v*"
   workflow_dispatch:
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${GITHUB_REF_NAME#fabric-v}"
           if [[ ! "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
           fi

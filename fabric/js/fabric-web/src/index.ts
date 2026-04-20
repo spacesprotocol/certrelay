@@ -7,19 +7,40 @@ import * as libveritas from "@spacesprotocol/libveritas";
 
 export type FabricOptions = Omit<CoreOptions, "provider">;
 
-/**
- * Initialize the WASM module. Must be called before using Fabric
- * when loading via `<script type="module">`, esm.sh, Deno, or
- * any non-bundler environment. Safe to call multiple times.
- *
- * Not needed when using a bundler (webpack, vite, etc.).
- */
-export const init: (() => Promise<any>) | undefined =
+const wasmInit: (() => Promise<any>) | undefined =
   (libveritas as any).default ?? (libveritas as any).init ?? (libveritas as any).__wbg_init;
+
+let wasmReady: Promise<void> | null = null;
+
+async function ensureInit(): Promise<void> {
+  if (!wasmInit) return;
+  if (!wasmReady) {
+    wasmReady = wasmInit().catch(() => {
+      // Already initialized (bundler environments) — safe to ignore
+      wasmReady = Promise.resolve();
+    });
+  }
+  await wasmReady;
+}
+
+/**
+ * Initialize the WASM module manually. Usually not needed —
+ * Fabric auto-initializes on first use. Call this if you need
+ * to control when the WASM binary is loaded (e.g. during app startup).
+ */
+export async function init(): Promise<void> {
+  await ensureInit();
+}
 
 export class Fabric extends FabricCore {
   constructor(options?: FabricOptions) {
     super({ ...options, provider: wasmProvider(libveritas) });
+  }
+
+  /** @internal Auto-initialize WASM before any network call. */
+  override async bootstrap(): Promise<void> {
+    await ensureInit();
+    return super.bootstrap();
   }
 }
 

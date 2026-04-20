@@ -1,14 +1,23 @@
 use std::path::PathBuf;
 
+use crate::anchor::AnchorSets;
+use crate::{
+    AppState, BOOTSTRAP_RELAYS, Config, ExtendedNetwork, Relay, ServiceRunner, bootstrap,
+    bootstrap_from, create_relay_veritas,
+};
 use clap::Parser;
 use spacedb::Configuration;
+use spaces_checkpoint::{
+    CHECKPOINT_BASE_URL, CHECKPOINT_FILES, ensure_checkpoint, fetch_latest, integrity,
+    needs_checkpoint,
+};
 use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
-use spaces_checkpoint::{needs_checkpoint, fetch_latest, ensure_checkpoint, integrity, CHECKPOINT_BASE_URL, CHECKPOINT_FILES};
-use crate::{bootstrap, bootstrap_from, create_relay_veritas, AppState, Config, ExtendedNetwork, Relay, ServiceRunner, BOOTSTRAP_RELAYS};
-use crate::anchor::AnchorSets;
 
 #[derive(Parser)]
-#[command(name = "certrelay", about = "Certificate relay for the Spaces protocol")]
+#[command(
+    name = "certrelay",
+    about = "Certificate relay for the Spaces protocol"
+)]
 struct Args {
     /// Network to use
     #[arg(long, default_value = "mainnet", env = "CERTRELAY_CHAIN")]
@@ -67,8 +76,6 @@ pub async fn run(
     let data_dir = args.data_dir.unwrap_or_else(default_data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
-
-
     // Start embedded yuki + spaced if no external spaced URL was provided
     let mut spaced_url = args.spaced_rpc_url;
     if spaced_url.is_none() {
@@ -106,7 +113,8 @@ pub async fn run(
 
                 yuki_checkpoint = Some(checkpoint.block_id());
 
-                let digest = checkpoint.digest_bytes()
+                let digest = checkpoint
+                    .digest_bytes()
                     .map_err(|e| anyhow::anyhow!("invalid checkpoint digest: {e}"))?;
                 let url = checkpoint.url(CHECKPOINT_BASE_URL);
 
@@ -136,23 +144,26 @@ pub async fn run(
             let _ = std::fs::write(&yuki_checkpoint_file, cp);
         }
 
-        let runner = ServiceRunner::new(data_dir.clone(), args.chain, yuki_checkpoint, shutdown.clone());
+        let runner = ServiceRunner::new(
+            data_dir.clone(),
+            args.chain,
+            yuki_checkpoint,
+            shutdown.clone(),
+        );
         let spaced_auth_url = runner.spaced_url_with_auth();
         tracing::info!(
             "starting embedded services (yuki + spaced) for {}",
             args.chain
         );
-        std::thread::Builder::new()
-            .name("services".into())
-            .spawn({
-                let shutdown = shutdown.clone();
-                move || {
-                    if let Err(e) = runner.run() {
-                        tracing::error!("embedded services failed: {e}");
-                        let _ = shutdown.send(());
-                    }
+        std::thread::Builder::new().name("services".into()).spawn({
+            let shutdown = shutdown.clone();
+            move || {
+                if let Err(e) = runner.run() {
+                    tracing::error!("embedded services failed: {e}");
+                    let _ = shutdown.send(());
                 }
-            })?;
+            }
+        })?;
 
         // Use the authenticated URL for the embedded spaced
         spaced_url = Some(spaced_auth_url);
@@ -291,7 +302,7 @@ pub fn build_hash_indexes_for_checkpoint(spaces_dir: PathBuf) -> anyhow::Result<
         }
         let path = spaces_dir.join(file);
         let Some(db_path) = path.to_str() else {
-            continue
+            continue;
         };
         build_hash_indexes_for_snapshots(db_path)?;
     }
@@ -303,8 +314,7 @@ pub fn build_hash_indexes_for_snapshots(db_path: &str) -> anyhow::Result<()> {
     tracing::info!("building hash indexes for snapshots ....");
     let db = spacedb::db::Database::open_with_config(
         db_path,
-        Configuration::standard()
-            .with_cache_size(500_000_000 /* 500 MB */)
+        Configuration::standard().with_cache_size(500_000_000 /* 500 MB */),
     )?;
 
     for (num, snapshot) in db.iter().enumerate() {

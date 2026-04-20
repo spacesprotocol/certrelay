@@ -3,8 +3,6 @@
 //! All protocol types use JSON serialization for cross-language compatibility.
 //! Only the `Message` type from libveritas remains binary (borsh).
 
-
-
 pub mod anchor;
 #[cfg(feature = "client")]
 pub mod client;
@@ -301,9 +299,7 @@ pub struct AddrEntry {
 
 impl AnchorSet {
     pub fn from_anchors(anchors: Vec<RootAnchor>) -> Self {
-        Self {
-            entries: anchors,
-        }
+        Self { entries: anchors }
     }
 }
 
@@ -355,6 +351,3 @@ mod tests {
         assert!(!json.contains("epoch_hint"));
     }
 }
-
-
-

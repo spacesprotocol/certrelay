@@ -3,13 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use libveritas::msg::QueryContext;
 use libveritas::Veritas;
+use libveritas::msg::QueryContext;
 use libveritas_testutil::fixture::*;
-use relay::{
-    AppState, Config, ExtendedNetwork, Handler, PeerInfo, Relay, SqliteStore,
-};
 use relay::anchor::AnchorSets;
+use relay::{AppState, Config, ExtendedNetwork, Handler, PeerInfo, Relay, SqliteStore};
 use resolver::{AnchorSet, HintsResponse};
 use spaces_protocol::slabel::SLabel;
 
@@ -24,8 +22,7 @@ fn build_veritas(state: &ChainState) -> Veritas {
     anchors.push(state.chain.current_root_anchor());
     anchors.sort_by(|a, b| b.block.height.cmp(&a.block.height));
     anchors.dedup_by_key(|a| a.block.height);
-    Veritas::new()
-        .with_anchors(anchors).unwrap()
+    Veritas::new().with_anchors(anchors).unwrap()
 }
 
 /// Create a Handler wired to the test chain state with an in-memory store.
@@ -160,8 +157,8 @@ fn test_kitchen_sink() {
 /// replacing Pending) is correctly rejected.  We mirror that logic here.
 #[test]
 fn test_incremental_zone_replacement() {
-    use std::collections::HashMap;
     use libveritas::Zone;
+    use std::collections::HashMap;
 
     let mut chain_state = ChainState::new();
     let mut runner = FixtureRunner::new(&mut chain_state, kitchen_sink());
@@ -183,7 +180,8 @@ fn test_incremental_zone_replacement() {
         // Verify manually to get expected zones
         let veritas = build_veritas(&chain_state);
         let verified = veritas
-            .verify_with_options(&ctx, msg.clone(), libveritas::VERIFY_DEV_MODE).unwrap();
+            .verify_with_options(&ctx, msg.clone(), libveritas::VERIFY_DEV_MODE)
+            .unwrap();
 
         // Update best_zones: only replace when the new zone is strictly better
         for zone in &verified.zones {
@@ -224,7 +222,11 @@ fn test_all_fixtures() {
     let fixtures: Vec<(&str, Fixture, Vec<&str>)> = vec![
         ("@staged", staged_only(), vec!["alice", "bob"]),
         ("@pending", single_commit_pending(), vec!["alice", "bob"]),
-        ("@sovereign", single_commit_finalized(), vec!["alice", "bob"]),
+        (
+            "@sovereign",
+            single_commit_finalized(),
+            vec!["alice", "bob"],
+        ),
         (
             "@two-pending",
             two_commits_second_pending(),
@@ -299,8 +301,15 @@ async fn test_relay_accepts_message() {
     let body = resp.text().await.unwrap();
     assert_eq!(body, "ok");
 
-    let record = app_state.handler.store.get_handle("alice@sovereign").unwrap();
-    assert!(record.is_some(), "alice should be stored after HTTP submission");
+    let record = app_state
+        .handler
+        .store
+        .get_handle("alice@sovereign")
+        .unwrap();
+    assert!(
+        record.is_some(),
+        "alice should be stored after HTTP submission"
+    );
 }
 
 #[tokio::test]
@@ -364,7 +373,10 @@ async fn test_broadcast_response_readable() {
     assert!(status.is_success(), "expected 2xx, got {}", status);
 
     // This is the path that would produce "error decoding response body"
-    let body_text = resp.text().await.expect("should be able to read response body as text");
+    let body_text = resp
+        .text()
+        .await
+        .expect("should be able to read response body as text");
     assert_eq!(body_text, "ok");
 }
 
@@ -388,16 +400,14 @@ async fn test_peers_endpoint() {
     }
 
     let client = reqwest::Client::new();
-    let resp = client
-        .get(format!("{}/peers", url))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(format!("{}/peers", url)).send().await.unwrap();
 
     assert_eq!(resp.status().as_u16(), 200);
 
     // Should parse as valid JSON array of PeerInfo
-    let peers: Vec<PeerInfo> = resp.json().await
+    let peers: Vec<PeerInfo> = resp
+        .json()
+        .await
         .expect("peers response should be valid JSON");
     assert!(!peers.is_empty(), "should have at least one peer");
 }
@@ -420,25 +430,29 @@ async fn test_anchors_endpoint() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
 
-    let root = resp.headers().get("x-anchor-root")
+    let root = resp
+        .headers()
+        .get("x-anchor-root")
         .expect("should have x-anchor-root header")
-        .to_str().unwrap();
+        .to_str()
+        .unwrap();
     assert!(!root.is_empty(), "anchor root should not be empty");
 
-    let height = resp.headers().get("x-anchor-height")
+    let height = resp
+        .headers()
+        .get("x-anchor-height")
         .expect("should have x-anchor-height header")
-        .to_str().unwrap();
+        .to_str()
+        .unwrap();
     assert!(!height.is_empty(), "anchor height should not be empty");
 
     // GET /anchors should return valid JSON
-    let resp = client
-        .get(format!("{}/anchors", url))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(format!("{}/anchors", url)).send().await.unwrap();
     assert_eq!(resp.status().as_u16(), 200);
 
-    let anchor_set: AnchorSet = resp.json().await
+    let anchor_set: AnchorSet = resp
+        .json()
+        .await
         .expect("anchors response should be valid JSON AnchorSet");
     assert!(!anchor_set.entries.is_empty(), "should have anchor entries");
     assert!(anchor_set.root_matches(), "anchor root hash should match");
@@ -452,9 +466,14 @@ async fn test_anchors_endpoint() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
 
-    let fetched: AnchorSet = resp.json().await
+    let fetched: AnchorSet = resp
+        .json()
+        .await
         .expect("anchors response with root param should be valid JSON");
-    assert_eq!(fetched.trust_id, anchor_set.trust_id, "fetched anchor root should match");
+    assert_eq!(
+        fetched.trust_id, anchor_set.trust_id,
+        "fetched anchor root should match"
+    );
 
     // GET /anchors?root=<nonexistent> should return 404
     let fake_root = "cd00e292c5970d3c5e2f0ffa5171e555bc46bfc4faddfb4a418b6840b86e79a3";
@@ -491,13 +510,18 @@ async fn test_hints_endpoint() {
 
     // Query hints
     let resp = client
-        .get(format!("{}/hints?q=alice@sovereign,bob@sovereign,@sovereign", url))
+        .get(format!(
+            "{}/hints?q=alice@sovereign,bob@sovereign,@sovereign",
+            url
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
 
-    let hints: HintsResponse = resp.json().await
+    let hints: HintsResponse = resp
+        .json()
+        .await
         .expect("hints response should be valid JSON");
     assert!(!hints.hints.is_empty(), "should have space hints");
     assert!(hints.anchor_tip > 0, "anchor_tip should be > 0");
@@ -544,5 +568,8 @@ async fn test_gossip_propagation() {
     assert!(root.is_some(), "relay B should have @sovereign from gossip");
 
     let alice = state_b.handler.store.get_handle("alice@sovereign").unwrap();
-    assert!(alice.is_some(), "relay B should have alice@sovereign from gossip");
+    assert!(
+        alice.is_some(),
+        "relay B should have alice@sovereign from gossip"
+    );
 }

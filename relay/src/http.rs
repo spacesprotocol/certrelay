@@ -6,16 +6,16 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use axum::{
+    Router,
     body::Bytes,
     extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
-    Router,
 };
+use governor::RateLimiter;
 use governor::clock::DefaultClock;
 use governor::state::keyed::DashMapStateStore;
-use governor::RateLimiter;
 use libveritas::msg::Message;
 use tokio::sync::Mutex;
 
@@ -156,14 +156,14 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// If `remote_ip_header` is set, reads that header and parses the first IP
 /// (handles comma-separated lists like X-Forwarded-For).
 fn client_ip(addr: &SocketAddr, headers: &HeaderMap, header_name: &Option<String>) -> IpAddr {
-    if let Some(name) = header_name {
-        if let Some(value) = headers.get(name.as_str()).and_then(|v| v.to_str().ok()) {
-            // Take the first entry (leftmost = original client for XFF-style headers,
-            // and the only value for single-value headers like CF-Connecting-IP)
-            let first = value.split(',').next().unwrap_or("").trim();
-            if let Ok(ip) = first.parse::<IpAddr>() {
-                return ip;
-            }
+    if let Some(name) = header_name
+        && let Some(value) = headers.get(name.as_str()).and_then(|v| v.to_str().ok())
+    {
+        // Take the first entry (leftmost = original client for XFF-style headers,
+        // and the only value for single-value headers like CF-Connecting-IP)
+        let first = value.split(',').next().unwrap_or("").trim();
+        if let Ok(ip) = first.parse::<IpAddr>() {
+            return ip;
         }
     }
     addr.ip()
@@ -185,7 +185,10 @@ async fn handle_message(
     }
 
     if body.len() > state.max_message_size {
-        return (StatusCode::PAYLOAD_TOO_LARGE, "message too large".to_string());
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "message too large".to_string(),
+        );
     }
 
     // Deserialize the message
@@ -193,14 +196,17 @@ async fn handle_message(
         Ok(m) => m,
         Err(e) => {
             tracing::warn!("failed to deserialize message: {}", e);
-            return (StatusCode::BAD_REQUEST, "invalid message format".to_string());
+            return (
+                StatusCode::BAD_REQUEST,
+                "invalid message format".to_string(),
+            );
         }
     };
 
     // Verify and store
     if let Err(e) = state.handler.handle_message(msg) {
         tracing::warn!("failed to handle message: {}", e);
-        return (StatusCode::BAD_REQUEST,  format!("rejected: {}", e));
+        return (StatusCode::BAD_REQUEST, format!("rejected: {}", e));
     }
 
     gossip_message(state, body).await;
@@ -291,14 +297,28 @@ async fn handle_query(
 
     let q = match params.get("q") {
         Some(q) if !q.is_empty() => q,
-        _ => return (StatusCode::BAD_REQUEST, "missing q parameter".as_bytes().to_vec()).into_response(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "missing q parameter".as_bytes().to_vec(),
+            )
+                .into_response();
+        }
     };
 
-    let handles: Vec<&str> = q.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let handles: Vec<&str> = q
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     const MAX_HANDLES: usize = 6;
     if handles.len() > MAX_HANDLES {
-        return (StatusCode::BAD_REQUEST, "too many handles (max 6)".as_bytes().to_vec()).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "too many handles (max 6)".as_bytes().to_vec(),
+        )
+            .into_response();
     }
 
     // Parse epoch hints: "space:root_hex:height,space:root_hex:height"
@@ -306,13 +326,16 @@ async fn handle_query(
     if let Some(hints_str) = params.get("hints") {
         for part in hints_str.split(',') {
             let segments: Vec<&str> = part.splitn(3, ':').collect();
-            if segments.len() == 3 {
-                if let Ok(height) = segments[2].parse::<u32>() {
-                    hint_map.insert(segments[0].to_string(), EpochHint {
+            if segments.len() == 3
+                && let Ok(height) = segments[2].parse::<u32>()
+            {
+                hint_map.insert(
+                    segments[0].to_string(),
+                    EpochHint {
                         root: segments[1].to_string(),
                         height,
-                    });
-                }
+                    },
+                );
             }
         }
     }
@@ -320,7 +343,7 @@ async fn handle_query(
     // Group handles by space
     let mut by_space: HashMap<String, Vec<String>> = HashMap::new();
     for handle in &handles {
-        let sep = handle.find(|c: char| c == '@' || c == '#');
+        let sep = handle.find(['@', '#']);
         let (space, label) = match sep {
             Some(0) => (handle.to_string(), String::new()),
             Some(i) => (handle[i..].to_string(), handle[..i].to_string()),
@@ -393,7 +416,10 @@ async fn handle_anchors(
             };
             let root: [u8; 32] = match bytes.try_into() {
                 Ok(r) => r,
-                Err(_) => return (StatusCode::BAD_REQUEST, headers, "root must be 32 bytes").into_response(),
+                Err(_) => {
+                    return (StatusCode::BAD_REQUEST, headers, "root must be 32 bytes")
+                        .into_response();
+                }
             };
             store.get(resolver::TrustId::from(root)).cloned()
         }
@@ -428,7 +454,11 @@ async fn handle_hints(
         _ => return (StatusCode::BAD_REQUEST, "missing q parameter").into_response(),
     };
 
-    let mut handles: Vec<&str> = q.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let mut handles: Vec<&str> = q
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     if handles.len() > 6 {
         return (StatusCode::BAD_REQUEST, "too many handles (max 6)").into_response();
@@ -446,7 +476,6 @@ async fn handle_hints(
         }
     }
 }
-
 
 /// GET /reverse?ids=num1,num2,... - Look up reverse records for numeric identities.
 ///
@@ -467,7 +496,11 @@ async fn handle_reverse(
         _ => return (StatusCode::BAD_REQUEST, "missing ids parameter").into_response(),
     };
 
-    let id_list: Vec<&str> = ids.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let id_list: Vec<&str> = ids
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     if id_list.len() > 20 {
         return (StatusCode::BAD_REQUEST, "too many ids (max 20)").into_response();
     }
@@ -510,15 +543,20 @@ async fn handle_addrs(
 
     match state.handler.store.get_addrs(name, address) {
         Ok(pairs) => {
-            let handles = pairs.into_iter()
+            let handles = pairs
+                .into_iter()
                 .map(|(handle, rev)| resolver::AddrEntry { handle, rev })
                 .collect();
             let mut headers = HeaderMap::new();
             headers.insert("cache-control", "public, max-age=300".parse().unwrap());
-            (headers, axum::Json(resolver::AddrMatch {
-                address: address.clone(),
-                handles,
-            })).into_response()
+            (
+                headers,
+                axum::Json(resolver::AddrMatch {
+                    address: address.clone(),
+                    handles,
+                }),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::warn!("addr lookup failed: {}", e);
@@ -551,10 +589,18 @@ async fn handle_chain_proof(
     };
 
     if request.spaces.len() > 6 {
-        return (StatusCode::BAD_REQUEST, "too many spaces (max 6)".as_bytes().to_vec()).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "too many spaces (max 6)".as_bytes().to_vec(),
+        )
+            .into_response();
     }
     if request.nums.len() > 20 {
-        return (StatusCode::BAD_REQUEST, "too many nums (max 20)".as_bytes().to_vec()).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "too many nums (max 20)".as_bytes().to_vec(),
+        )
+            .into_response();
     }
 
     match state.chain.prove(&request).await {
@@ -567,10 +613,7 @@ async fn handle_chain_proof(
 }
 
 /// Gossip a message to up to 4 random verified peers.
-async fn gossip_message(
-    state: Arc<AppState>,
-    msg_bytes: Bytes,
-) {
+async fn gossip_message(state: Arc<AppState>, msg_bytes: Bytes) {
     use rand::seq::IndexedRandom;
 
     let peer_list: Vec<PeerInfo> = {
@@ -672,4 +715,3 @@ pub async fn bootstrap_from(
 
     Ok(peers)
 }
-

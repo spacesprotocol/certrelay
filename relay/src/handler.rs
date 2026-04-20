@@ -1,21 +1,21 @@
-use std::num::NonZeroU32;
-use governor::DefaultKeyedRateLimiter;
-use governor::Quota;
-use libveritas::cert::{Witness};
-use libveritas::msg::{self, QueryContext};
-use libveritas::spaces_protocol::sname::{Subname, NameLike, SName};
-use libveritas::{ProvableOption, Veritas, Zone};
-use spaces_protocol::slabel::SLabel;
-use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use libveritas::builder::{DataUpdateRequest, MessageBuilder};
-use libveritas::sip7::{ParsedRecord, SIG_PRIMARY_ZONE};
-use resolver::{EpochResult, HandleHint, SpaceHint};
 use crate::anchor::AnchorSets;
 use crate::spaced::SpacedClient;
 use crate::store::{HandleRecord, SqliteStore};
+use governor::DefaultKeyedRateLimiter;
+use governor::Quota;
+use libveritas::builder::{DataUpdateRequest, MessageBuilder};
+use libveritas::cert::Witness;
+use libveritas::msg::{self, QueryContext};
+use libveritas::sip7::{ParsedRecord, SIG_PRIMARY_ZONE};
+use libveritas::spaces_protocol::sname::{NameLike, SName, Subname};
+use libveritas::{ProvableOption, Veritas, Zone};
+use resolver::{EpochResult, HandleHint, SpaceHint};
+use spaces_protocol::slabel::SLabel;
+use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU32;
+use std::str::FromStr;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Certificate handler that verifies messages and stores zones/handles.
 pub struct Handler {
@@ -38,9 +38,9 @@ impl Handler {
             anchor_store: Mutex::new(anchor_store),
             store,
             dev_mode: false,
-            space_rate: governor::RateLimiter::keyed(
-                Quota::per_minute(NonZeroU32::new(100).unwrap()),
-            ),
+            space_rate: governor::RateLimiter::keyed(Quota::per_minute(
+                NonZeroU32::new(100).unwrap(),
+            )),
             handle_rate: governor::RateLimiter::keyed(
                 Quota::with_period(std::time::Duration::from_secs(300))
                     .unwrap()
@@ -72,13 +72,11 @@ impl Handler {
                 None => {
                     builder.add_cert(libveritas::cert::Certificate {
                         version: 0,
-                        subject:  SName::from_space(&space),
-                        witness: Witness::Root {
-                            receipt: None,
-                        },
+                        subject: SName::from_space(&space),
+                        witness: Witness::Root { receipt: None },
                     });
                     continue;
-                },
+                }
             };
             let mut parent_cert = parent.cert;
             // Skip receipt if client can verify from their cached epoch
@@ -86,16 +84,15 @@ impl Handler {
                 .epoch_hint
                 .as_ref()
                 .is_some_and(|h| epoch_hint_verifiable_by(h, &parent.zone))
+                && let Witness::Root { receipt } = &mut parent_cert.witness
             {
-                if let Witness::Root { receipt } = &mut parent_cert.witness {
-                    std::mem::take(receipt);
-                }
+                std::mem::take(receipt);
             }
 
             builder.add_update(DataUpdateRequest {
                 handle: parent_cert.subject.clone(),
                 records: Some(parent.zone.records.clone()),
-                delegate_records: if let ProvableOption::Exists {value } = parent.zone.delegate {
+                delegate_records: if let ProvableOption::Exists { value } = parent.zone.delegate {
                     Some(value.records)
                 } else {
                     None
@@ -121,7 +118,8 @@ impl Handler {
                 builder.add_update(DataUpdateRequest {
                     handle: handle.cert.subject.clone(),
                     records: Some(handle.zone.records),
-                    delegate_records: if let ProvableOption::Exists {value } = handle.zone.delegate {
+                    delegate_records: if let ProvableOption::Exists { value } = handle.zone.delegate
+                    {
                         Some(value.records)
                     } else {
                         None
@@ -133,14 +131,18 @@ impl Handler {
         let chain = chain.prove(&builder.chain_proof_request()).await?;
         let (msg, unsigned) = builder.build(chain)?;
         if !unsigned.is_empty() && unsigned.iter().all(|u| !u.records.is_empty()) {
-            let missing_sigs = unsigned.iter().map(|u| u.canonical.to_string())
-                .collect::<Vec<_>>().join(", ");
+            let missing_sigs = unsigned
+                .iter()
+                .map(|u| u.canonical.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
 
-            return Err(anyhow::anyhow!("Could not build response: missing signatures for {}",
-                missing_sigs)
-            );
+            return Err(anyhow::anyhow!(
+                "Could not build response: missing signatures for {}",
+                missing_sigs
+            ));
         }
-        
+
         Ok(msg)
     }
 
@@ -156,10 +158,11 @@ impl Handler {
         };
 
         let all_rows = self.store.get_handle_hints(handles)?;
-        for space in handles.iter().filter(|h| h.starts_with("@") || h.starts_with("#")) {
-            let Some(space_row) = all_rows
-                .iter()
-                .find(|r| &r.handle == space) else {
+        for space in handles
+            .iter()
+            .filter(|h| h.starts_with("@") || h.starts_with("#"))
+        {
+            let Some(space_row) = all_rows.iter().find(|r| &r.handle == space) else {
                 continue;
             };
 
@@ -171,9 +174,13 @@ impl Handler {
                 epochs: vec![],
             };
             for row in all_rows
-                .iter().filter(|r| r.handle.ends_with(space) && r.handle != *space)
-                .collect::<Vec<_>>() {
-                let idx = hint.epochs.iter()
+                .iter()
+                .filter(|r| r.handle.ends_with(space) && r.handle != *space)
+                .collect::<Vec<_>>()
+            {
+                let idx = hint
+                    .epochs
+                    .iter()
                     .position(|x| x.epoch == row.epoch_height)
                     .unwrap_or_else(|| {
                         hint.epochs.push(EpochResult {
@@ -200,7 +207,11 @@ impl Handler {
     /// and stores any new handle records.
     pub fn handle_message(&self, msg: msg::Message) -> anyhow::Result<()> {
         // Periodically clean up expired rate limiter entries
-        if self.msg_count.fetch_add(1, Ordering::Relaxed) % 10_000 == 0 {
+        if self
+            .msg_count
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(10_000)
+        {
             self.space_rate.retain_recent();
             self.handle_rate.retain_recent();
             self.space_rate.shrink_to_fit();
@@ -216,8 +227,15 @@ impl Handler {
         }
 
         // Verify the message
-        let options = if self.dev_mode { libveritas::VERIFY_DEV_MODE } else { 0 };
-        let res = self.veritas.lock().unwrap()
+        let options = if self.dev_mode {
+            libveritas::VERIFY_DEV_MODE
+        } else {
+            0
+        };
+        let res = self
+            .veritas
+            .lock()
+            .unwrap()
             .verify_with_options(&ctx, msg, options)?;
 
         // Build zone lookup by canonical name and epoch height by space
@@ -248,37 +266,40 @@ impl Handler {
                 let handle_str = cert.subject.to_string();
                 let zone = zone_map.get(&handle_str)?;
 
-
-                    if zone.records.as_slice().len() > MAX_RECORDS_SIZE {
-                        tracing::warn!("{}: records exceed {} bytes, skipping", handle_str, MAX_RECORDS_SIZE);
-                        return None;
+                if zone.records.as_slice().len() > MAX_RECORDS_SIZE {
+                    tracing::warn!(
+                        "{}: records exceed {} bytes, skipping",
+                        handle_str,
+                        MAX_RECORDS_SIZE
+                    );
+                    return None;
+                }
+                if let Some(sig) = zone.records.sig() {
+                    let rev_name = sig.handle.to_string();
+                    if sig.flags & SIG_PRIMARY_ZONE == SIG_PRIMARY_ZONE
+                        && let Some(num_id) = &zone.num_id
+                    {
+                        revs.push((num_id.to_string(), rev_name.clone()));
                     }
-                    if let Some(sig) = zone.records.sig() {
-                        let rev_name = sig.handle.to_string();
-                        if sig.flags & SIG_PRIMARY_ZONE == SIG_PRIMARY_ZONE {
-                            if let Some(num_id) = &zone.num_id {
-                                revs.push((num_id.to_string(), rev_name.clone()));
-                            }
-                        }
-                        // Collect addr records for the index
-                        let addrs: Vec<(String, String)> = zone
-                            .records
-                            .iter()
-                            .map(|rrs| {
-                                rrs.filter_map(|r| match r {
-                                        ParsedRecord::Addr { key, value } => {
-                                            value.iter().next().map(|v| (key.to_string(), v.to_string()))
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
+                    // Collect addr records for the index
+                    let addrs: Vec<(String, String)> = zone
+                        .records
+                        .iter()
+                        .map(|rrs| {
+                            rrs.filter_map(|r| match r {
+                                ParsedRecord::Addr { key, value } => value
+                                    .iter()
+                                    .next()
+                                    .map(|v| (key.to_string(), v.to_string())),
+                                _ => None,
                             })
-                            .unwrap_or_default();
-                        if !addrs.is_empty() {
-                            addr_index.insert(handle_str.clone(), (rev_name, addrs));
-                        }
+                            .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    if !addrs.is_empty() {
+                        addr_index.insert(handle_str.clone(), (rev_name, addrs));
                     }
-
+                }
 
                 let space = cert.subject.space()?.to_string();
 
@@ -294,9 +315,7 @@ impl Handler {
                 let epoch_height = epoch_map.get(&space).copied().unwrap_or(0);
                 let offchain_seq = zone.records.seq().unwrap_or(0);
                 let delegate_offchain_seq = match &zone.delegate {
-                    ProvableOption::Exists { value: d } => {
-                        d.records.seq().unwrap_or(0)
-                    }
+                    ProvableOption::Exists { value: d } => d.records.seq().unwrap_or(0),
                     _ => 0,
                 };
                 Some(HandleRecord {
@@ -317,7 +336,8 @@ impl Handler {
         );
 
         if !revs.is_empty() {
-            let rev_refs: Vec<(&str, &str)> = revs.iter()
+            let rev_refs: Vec<(&str, &str)> = revs
+                .iter()
                 .map(|(id, name)| (id.as_str(), name.as_str()))
                 .collect();
             self.store.set_revs(&rev_refs)?;
@@ -326,7 +346,8 @@ impl Handler {
         // Update address index for stored handles
         for handle in &result.stored_handles {
             if let Some((rev, addrs)) = addr_index.get(handle) {
-                let refs: Vec<(&str, &str)> = addrs.iter()
+                let refs: Vec<(&str, &str)> = addrs
+                    .iter()
                     .map(|(n, a)| (n.as_str(), a.as_str()))
                     .collect();
                 self.store.set_addrs(handle, rev, &refs)?;

@@ -2,12 +2,22 @@
 resolver = "2"
 members = ["fabric/rust", "relay", "tests"]
 
-[workspace.dependencies]
-libveritas = { git = "https://github.com/spacesprotocol/libveritas.git" }
-libveritas_testutil = { git = "https://github.com/spacesprotocol/libveritas.git" }
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/spacesprotocol/certrelay"
+homepage = "https://spacesprotocol.org"
+authors = ["Buffrr <contact@buffrr.dev>"]
 
-spaces_client = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
-spaces_protocol = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
-spaces_nums = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
-spaces_checkpoint = {git = "https://github.com/spacesprotocol/spaces.git", branch = "subspaces"}
-spacedb = { git = "https://github.com/spacesprotocol/spacedb.git", features = ["hash-idx"] }
+[workspace.dependencies]
+fabric-rs = { path = "fabric/rust", version = "0.1.0" }
+libveritas = { version = "0.1" }
+libveritas_testutil = { version = "0.1" }
+
+spaces_client = { version = "0.1" }
+spaces_protocol = { version = "0.1" }
+spaces_nums = { version = "0.1" }
+spaces_checkpoint = { version = "0.1" }
+spacedb = { version = "0.1", features = ["hash-idx"] }

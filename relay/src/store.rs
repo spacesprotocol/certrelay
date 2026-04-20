@@ -5,10 +5,10 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::anyhow;
+use libveritas::Zone;
 use libveritas::cert::Certificate;
 use resolver::ReverseRecord;
-use libveritas::Zone;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use spaces_protocol::slabel::SLabel;
 
 const SCHEMA: &str = r#"
@@ -148,7 +148,10 @@ impl SqliteStore {
             let zone_data = borsh::to_vec(&update.zone)
                 .map_err(|e| anyhow!("failed to serialize zone: {}", e))?;
             entries.push(Prepared {
-                handle, space, cert_data, zone_data,
+                handle,
+                space,
+                cert_data,
+                zone_data,
                 epoch_height: update.epoch_height,
                 offchain_seq: update.offchain_seq,
                 delegate_offchain_seq: update.delegate_offchain_seq,
@@ -166,11 +169,9 @@ impl SqliteStore {
         let to_store: Vec<_> = entries
             .into_iter()
             .zip(updates.iter())
-            .filter(|(e, update)| {
-                match existing_zones.get(e.handle.as_str()) {
-                    Some(existing) => update.zone.is_better_than(existing).unwrap_or(false),
-                    None => true,
-                }
+            .filter(|(e, update)| match existing_zones.get(e.handle.as_str()) {
+                Some(existing) => update.zone.is_better_than(existing).unwrap_or(false),
+                None => true,
             })
             .map(|(e, _)| e)
             .collect();
@@ -178,19 +179,24 @@ impl SqliteStore {
         let skipped = updates.len() - to_store.len();
 
         if to_store.is_empty() {
-            return Ok(BulkStoreResult { stored: 0, skipped, stored_handles: vec![] });
+            return Ok(BulkStoreResult {
+                stored: 0,
+                skipped,
+                stored_handles: vec![],
+            });
         }
 
         // Bulk INSERT
-        let placeholders: Vec<String> =
-            to_store.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string()).collect();
+        let placeholders: Vec<String> = to_store
+            .iter()
+            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)".to_string())
+            .collect();
         let query = format!(
             "INSERT OR REPLACE INTO handles (handle, space, cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, updated_at) VALUES {}",
             placeholders.join(", ")
         );
 
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> =
-            Vec::with_capacity(to_store.len() * 8);
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(to_store.len() * 8);
         for e in &to_store {
             params.push(Box::new(e.handle.clone()));
             params.push(Box::new(e.space.clone()));
@@ -202,19 +208,23 @@ impl SqliteStore {
             params.push(Box::new(now));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         conn.execute(&query, param_refs.as_slice())?;
 
         let stored_handles = to_store.iter().map(|e| e.handle.clone()).collect();
-        Ok(BulkStoreResult { stored: to_store.len(), skipped, stored_handles })
+        Ok(BulkStoreResult {
+            stored: to_store.len(),
+            skipped,
+            stored_handles,
+        })
     }
 
     /// Get a single handle record.
     pub fn get_handle(&self, handle: &str) -> anyhow::Result<Option<HandleRecord>> {
         let conn = self.conn.lock().unwrap();
 
-        let row: Option<(Vec<u8>, Vec<u8>, u32, i64, i64)> = conn
+        type HandleRow = (Vec<u8>, Vec<u8>, u32, i64, i64);
+        let row: Option<HandleRow> = conn
             .query_row(
                 "SELECT cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq FROM handles WHERE handle = ?",
                 params![handle],
@@ -229,7 +239,9 @@ impl SqliteStore {
                 let zone: Zone = borsh::from_slice(&zone_bytes)
                     .map_err(|e| anyhow!("failed to deserialize zone: {}", e))?;
                 Ok(Some(HandleRecord {
-                    cert, zone, epoch_height,
+                    cert,
+                    zone,
+                    epoch_height,
                     offchain_seq: offchain_seq as u64,
                     delegate_offchain_seq: delegate_offchain_seq as u64,
                 }))
@@ -253,13 +265,17 @@ impl SqliteStore {
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let params: Vec<&dyn rusqlite::ToSql> = handles
-            .iter()
-            .map(|h| h as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            handles.iter().map(|h| h as &dyn rusqlite::ToSql).collect();
 
         let rows = stmt.query_map(params.as_slice(), |row| {
-            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, u32>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, u32>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
         })?;
 
         let mut results = Vec::new();
@@ -270,7 +286,9 @@ impl SqliteStore {
             let zone: Zone = borsh::from_slice(&zone_bytes)
                 .map_err(|e| anyhow!("failed to deserialize zone: {}", e))?;
             results.push(HandleRecord {
-                cert, zone, epoch_height,
+                cert,
+                zone,
+                epoch_height,
                 offchain_seq: offchain_seq as u64,
                 delegate_offchain_seq: delegate_offchain_seq as u64,
             });
@@ -321,10 +339,8 @@ impl SqliteStore {
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let params: Vec<&dyn rusqlite::ToSql> = handles
-            .iter()
-            .map(|h| h as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            handles.iter().map(|h| h as &dyn rusqlite::ToSql).collect();
 
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok(HandleHintRow {
@@ -355,10 +371,8 @@ impl SqliteStore {
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let params: Vec<&dyn rusqlite::ToSql> = handles
-            .iter()
-            .map(|h| h as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            handles.iter().map(|h| h as &dyn rusqlite::ToSql).collect();
 
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
@@ -426,7 +440,12 @@ impl SqliteStore {
     /// Update address index for a handle. Deletes old entries by canonical handle and inserts new ones.
     /// `handle` is the canonical name (used for delete), `rev` is the human-readable name.
     /// `entries` is a list of `(addr_name, addr_value)` pairs, e.g. `("btc", "bc1q...")`.
-    pub fn set_addrs(&self, handle: &str, rev: &str, entries: &[(&str, &str)]) -> anyhow::Result<()> {
+    pub fn set_addrs(
+        &self,
+        handle: &str,
+        rev: &str,
+        entries: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM addrs WHERE handle = ?", params![handle])?;
         if entries.is_empty() {
@@ -445,9 +464,7 @@ impl SqliteStore {
     /// Look up handles by address. Returns (canonical_handle, rev_name) pairs.
     pub fn get_addrs(&self, name: &str, addr: &str) -> anyhow::Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT handle, rev FROM addrs WHERE name = ? AND addr = ?"
-        )?;
+        let mut stmt = conn.prepare("SELECT handle, rev FROM addrs WHERE name = ? AND addr = ?")?;
         let rows = stmt.query_map(params![name, addr], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;

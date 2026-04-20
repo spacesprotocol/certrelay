@@ -440,9 +440,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "bdk_chain"
+name = "bdk_chain_backport"
 version = "0.21.0"
-source = "git+https://github.com/buffrr/bdk.git?rev=43bca8643dec6fdda99e4a29bf88709729af349e#43bca8643dec6fdda99e4a29bf88709729af349e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d580eb55991b7a2415d71d195935f4f88b138257a5e7756724d77974c2f15153"
 dependencies = [
  "bdk_core",
  "bitcoin",
@@ -453,8 +454,9 @@ dependencies = [
 
 [[package]]
 name = "bdk_core"
-version = "0.4.0"
-source = "git+https://github.com/buffrr/bdk.git?rev=43bca8643dec6fdda99e4a29bf88709729af349e#43bca8643dec6fdda99e4a29bf88709729af349e"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b545aea1efc090e4f71f1dd5468090d9f54c3de48002064c04895ef811fbe0b2"
 dependencies = [
  "bitcoin",
  "hashbrown 0.14.5",
@@ -462,11 +464,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bdk_wallet"
+name = "bdk_wallet_backport"
 version = "1.0.0-beta.6"
-source = "git+https://github.com/buffrr/bdk.git?rev=43bca8643dec6fdda99e4a29bf88709729af349e#43bca8643dec6fdda99e4a29bf88709729af349e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbf2fadfbc496ddc97a19bc99196abafe6d393eb0f6e51f36aa6cf93b9aeb8db"
 dependencies = [
- "bdk_chain",
+ "bdk_chain_backport",
  "bip39",
  "bitcoin",
  "miniscript",
@@ -621,6 +624,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin_yuki"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "745c612d5df594e30f526bcd62af6e13909e26c109a6d9600197010f2f944a57"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bip324",
+ "bitcoin",
+ "clap",
+ "env_logger",
+ "futures-util",
+ "hex",
+ "jsonrpsee",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -692,7 +720,8 @@ dependencies = [
 [[package]]
 name = "borsh_utils"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61c0cd2efcc60ce44ca958baa626593a23006b5418b1fa8f038c23aa85f7a97f"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -1103,7 +1132,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabric"
+name = "fabric-rs"
 version = "0.1.0"
 dependencies = [
  "dashmap",
@@ -1759,7 +1788,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "borsh",
- "fabric",
+ "fabric-rs",
  "hex",
  "libveritas",
  "libveritas_testutil",
@@ -2006,8 +2035,9 @@ dependencies = [
 
 [[package]]
 name = "libveritas"
-version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#b9163abd6361ccdd0a61ea35859ae1244fd6d823"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cf115fd0ad4269e52e6887481c216735a72b8e6c606317bbe9b97a3b7f19e3"
 dependencies = [
  "base64 0.22.1",
  "borsh",
@@ -2024,8 +2054,9 @@ dependencies = [
 
 [[package]]
 name = "libveritas_testutil"
-version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#b9163abd6361ccdd0a61ea35859ae1244fd6d823"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a69a2e9b822fcdb97d696d8b354148dc283f0119b0589dc67a309a71e911b525"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -2042,8 +2073,9 @@ dependencies = [
 
 [[package]]
 name = "libveritas_zk"
-version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/libveritas.git#b9163abd6361ccdd0a61ea35859ae1244fd6d823"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c67914770647dd88766cd7da471776bebd28751dd561d7782e978b12d9524cf"
 dependencies = [
  "borsh",
  "serde",
@@ -2723,10 +2755,11 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "bitcoin_yuki",
  "borsh",
  "clap",
  "env_logger",
- "fabric",
+ "fabric-rs",
  "governor",
  "hex",
  "libveritas",
@@ -2745,7 +2778,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "url",
- "yuki",
 ]
 
 [[package]]
@@ -3372,7 +3404,8 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 [[package]]
 name = "sip7"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b684197991554bec0801fb44663974608d59ac6df4f95d2d84a3955e82499a85"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -3430,8 +3463,9 @@ dependencies = [
 
 [[package]]
 name = "spacedb"
-version = "0.0.12"
-source = "git+https://github.com/spacesprotocol/spacedb.git#43f23e78e4e5fffb8d89661a4b7f39ab43a5a644"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a48cda82e951391df9d0a54c96f8b04e117ff39abad5359b181cb71c80798d77"
 dependencies = [
  "bincode",
  "borsh",
@@ -3444,7 +3478,8 @@ dependencies = [
 [[package]]
 name = "spaces_checkpoint"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "044392ea966b553c792fcf85b72e4da08ea2c8ea37ded4eeb43cb491be528de4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3462,8 +3497,9 @@ dependencies = [
 
 [[package]]
 name = "spaces_client"
-version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d817eddfabcd6d3115f1c5c9b19a0f64ead6542d216a79dac1afe9d7c19ffb4"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3497,7 +3533,8 @@ dependencies = [
 [[package]]
 name = "spaces_nums"
 version = "0.1.0"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2015555e35781fc95ac0eb8e50bef6e70929248ea61d4101b195b4d0abb13e1d"
 dependencies = [
  "bech32",
  "bitcoin",
@@ -3511,8 +3548,9 @@ dependencies = [
 
 [[package]]
 name = "spaces_protocol"
-version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2f46b7eb14311193304301a394a30e5f7bdfd7fd9f70a5c8113610bf2b5cc2c"
 dependencies = [
  "bitcoin",
  "borsh",
@@ -3522,11 +3560,12 @@ dependencies = [
 
 [[package]]
 name = "spaces_wallet"
-version = "0.0.7"
-source = "git+https://github.com/spacesprotocol/spaces.git?branch=subspaces#b2e982ce231928e637973df4cc1d5933579d2bd6"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "703c9b4b9d4fa4c7097bf46a471699604f1bc3102559609ab66e97c8965258b0"
 dependencies = [
  "anyhow",
- "bdk_wallet",
+ "bdk_wallet_backport",
  "bech32",
  "bitcoin",
  "borsh",
@@ -4540,30 +4579,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "synstructure",
-]
-
-[[package]]
-name = "yuki"
-version = "0.0.1"
-source = "git+https://github.com/imperviousinc/yuki.git#f638494a20f13ff87bfa1d962ee1d5586957483a"
-dependencies = [
- "anyhow",
- "bincode",
- "bip324",
- "bitcoin",
- "clap",
- "env_logger",
- "futures-util",
- "hex",
- "jsonrpsee",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
