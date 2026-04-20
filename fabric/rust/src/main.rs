@@ -14,11 +14,15 @@ async fn main() {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--seeds" => {
-                let val = it.next().unwrap_or_else(|| exit_usage("--seeds requires a value"));
+                let val = it
+                    .next()
+                    .unwrap_or_else(|| exit_usage("--seeds requires a value"));
                 seeds = val.split(',').map(|s| s.to_string()).collect();
             }
             "--trust-id" => {
-                let val = it.next().unwrap_or_else(|| exit_usage("--trust-id requires a value"));
+                let val = it
+                    .next()
+                    .unwrap_or_else(|| exit_usage("--trust-id requires a value"));
                 trust_id = Some(TrustId::from_str(val).unwrap_or_else(|e| {
                     eprintln!("error: invalid trust id: {e}");
                     std::process::exit(1);

@@ -1,0 +1,61 @@
+[workspace]
+changelog_path = "CHANGELOG.md"
+changelog_update = true
+pr_draft = false
+
+[changelog]
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+
+body = """
+## [{{ version | trim_start_matches(pat="v") }}]\
+  {%- if release_link -%}
+    ({{ release_link }})
+  {% endif %} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+    {% if commit.breaking %}[**breaking**] {% endif %}\
+    {{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}
+"""
+
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactor" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", group = "Tests" },
+  { message = "^build", group = "Build" },
+  { message = "^ci", group = "CI" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", group = "Chore" },
+  { message = "^revert", group = "Revert" },
+]
+
+# Published to crates.io
+[[package]]
+name = "fabric-rs"
+publish = true
+git_release_enable = true
+git_release_latest = false
+git_tag_name = "fabric-v{{ version }}"
+
+# Binary — not published to crates.io
+[[package]]
+name = "relay"
+release = false
+publish = false
+
+[[package]]
+name = "integration-tests"
+release = false
+publish = false

@@ -2,13 +2,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use spaces_client::config::ExtendedNetwork;
-use spaces_client::jsonrpsee::http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
-use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
-use spaces_protocol::bitcoin::BlockHash;
-use spaces_protocol::bitcoin::hashes::Hash as HashUtil;
-use spaces_protocol::constants::ChainAnchor;
-use spaces_nums::RootAnchor;
 use crate::anchor::AnchorSets;
 use crate::create_relay_veritas;
 use crate::handler::Handler;
@@ -16,6 +9,13 @@ use crate::http::{self, AppState, DEFAULT_MAX_MESSAGE_SIZE};
 use crate::peer::PeerConfig;
 use crate::spaced::SpacedClient;
 use crate::store::SqliteStore;
+use spaces_client::config::ExtendedNetwork;
+use spaces_client::jsonrpsee::http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
+use spaces_client::store::chain::ROOT_ANCHORS_COUNT;
+use spaces_nums::RootAnchor;
+use spaces_protocol::bitcoin::BlockHash;
+use spaces_protocol::bitcoin::hashes::Hash as HashUtil;
+use spaces_protocol::constants::ChainAnchor;
 
 fn zero_anchor() -> RootAnchor {
     RootAnchor {
@@ -74,21 +74,18 @@ pub struct Relay {
 
 impl Relay {
     pub fn new(config: Config) -> anyhow::Result<Self> {
-        let spaced_url = config.spaced_url.clone()
+        let spaced_url = config
+            .spaced_url
+            .clone()
             .unwrap_or_else(|| ServiceRunner::default_spaced_url(config.network));
 
         let mut builder = HttpClientBuilder::default();
         let url = if let Ok(parsed) = url::Url::parse(&spaced_url) {
             if !parsed.username().is_empty() {
-                let credentials = format!(
-                    "{}:{}",
-                    parsed.username(),
-                    parsed.password().unwrap_or("")
-                );
-                let encoded = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    credentials,
-                );
+                let credentials =
+                    format!("{}:{}", parsed.username(), parsed.password().unwrap_or(""));
+                let encoded =
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials);
                 let mut headers = HeaderMap::new();
                 headers.insert(
                     "authorization",
@@ -115,11 +112,7 @@ impl Relay {
         let mut handler = Handler::new(veritas, store, anchor_store);
         handler.dev_mode = config.dev_mode;
 
-        let mut state = AppState::new(
-            handler,
-            chain,
-            config.peer_config,
-        );
+        let mut state = AppState::new(handler, chain, config.peer_config);
         state.max_message_size = config.max_message_size;
         state.capabilities = config.capabilities;
         state.is_bootstrap = config.is_bootstrap;
@@ -172,7 +165,13 @@ impl ServiceRunner {
             .take(64)
             .map(char::from)
             .collect();
-        Self { data_dir, network, yuki_checkpoint, rpc_password, shutdown }
+        Self {
+            data_dir,
+            network,
+            yuki_checkpoint,
+            rpc_password,
+            shutdown,
+        }
     }
 
     /// Start yuki and spaced in dedicated threads with their own tokio runtimes.
@@ -210,7 +209,8 @@ impl ServiceRunner {
             })?;
 
         // Wait for the first service to exit
-        let (name, result) = done_rx.recv()
+        let (name, result) = done_rx
+            .recv()
             .map_err(|_| anyhow::anyhow!("service threads exited without reporting"))?;
 
         // Signal the remaining service to shut down
@@ -240,7 +240,11 @@ impl ServiceRunner {
 
     /// Spaced URL with embedded auth credentials.
     pub fn spaced_url_with_auth(&self) -> String {
-        format!("http://__cookie__:{}@127.0.0.1:{}", self.rpc_password, Self::spaced_port(self.network))
+        format!(
+            "http://__cookie__:{}@127.0.0.1:{}",
+            self.rpc_password,
+            Self::spaced_port(self.network)
+        )
     }
 
     /// Path to the cookie file spaced will write for RPC auth.
@@ -277,9 +281,12 @@ impl ServiceRunner {
     fn yuki_args(&self) -> Vec<String> {
         let mut args = vec![
             "yuki".into(),
-            "--chain".into(), self.network.to_string(),
-            "--rpc-port".into(), Self::yuki_port(self.network).to_string(),
-            "--data-dir".into(), self.data_dir.join("yuki").to_str().unwrap().to_string(),
+            "--chain".into(),
+            self.network.to_string(),
+            "--rpc-port".into(),
+            Self::yuki_port(self.network).to_string(),
+            "--data-dir".into(),
+            self.data_dir.join("yuki").to_str().unwrap().to_string(),
         ];
         if let Some(cp) = &self.yuki_checkpoint {
             args.push("--checkpoint".into());
@@ -291,16 +298,23 @@ impl ServiceRunner {
     fn spaced_args(&self) -> Vec<String> {
         vec![
             "spaced".into(),
-            "--chain".into(), self.network.to_string(),
-            "--rpc-port".into(), Self::spaced_port(self.network).to_string(),
-            "--data-dir".into(), self.spaced_data_dir().to_str().unwrap().to_string(),
-            "--bitcoin-rpc-url".into(), self.yuki_url(),
+            "--chain".into(),
+            self.network.to_string(),
+            "--rpc-port".into(),
+            Self::spaced_port(self.network).to_string(),
+            "--data-dir".into(),
+            self.spaced_data_dir().to_str().unwrap().to_string(),
+            "--bitcoin-rpc-url".into(),
+            self.yuki_url(),
             "--bitcoin-rpc-light".into(),
-            "--num-anchors".into(), (ROOT_ANCHORS_COUNT * 2).to_string(),
+            "--num-anchors".into(),
+            (ROOT_ANCHORS_COUNT * 2).to_string(),
             "--index-node-hashes".into(),
             "--enable-pruning".into(),
-            "--rpc-user".into(), "__cookie__".into(),
-            "--rpc-password".into(), self.rpc_password.clone(),
+            "--rpc-user".into(),
+            "__cookie__".into(),
+            "--rpc-password".into(),
+            self.rpc_password.clone(),
         ]
     }
 

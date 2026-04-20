@@ -1,3 +1,7 @@
+// <doc:install>
+// cargo add fabric-rs
+// </doc:install>
+
 use fabric::client::{Fabric};
 use fabric::libveritas::builder::MessageBuilder;
 use fabric::libveritas::cert::CertificateChain;

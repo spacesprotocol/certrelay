@@ -3,7 +3,7 @@ name: Publish Swift
 on:
   push:
     tags:
-      - "v*"
+      - "fabric-v*"
   workflow_dispatch:
 
 permissions:

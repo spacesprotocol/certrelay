@@ -1,3 +1,7 @@
+// <doc:install>
+// npm install @spacesprotocol/fabric-web
+// </doc:install>
+
 import { Fabric, RecordSet, Record, MessageBuilder } from "@spacesprotocol/fabric-web";
 import { signSchnorr } from "@spacesprotocol/fabric-web/signing";
 

@@ -1,22 +1,27 @@
+use crate::seeds::SEEDS;
+pub use crate::{
+    AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId,
+};
 use libveritas::cert::CertificateChain;
-use libveritas::msg::{QueryContext};
+use libveritas::msg::QueryContext;
 use libveritas::spaces_protocol::sname::{NameLike, SName};
-use libveritas::{compute_trust_set, MessageError, ProvableOption, SovereigntyState, TrustSet, VerifiedMessage, Veritas, Zone};
+use libveritas::{
+    MessageError, ProvableOption, SovereigntyState, TrustSet, VerifiedMessage, Veritas, Zone,
+    compute_trust_set,
+};
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use serde::{Deserialize, Serialize};
-pub use crate::{AnchorSet, EpochHint, HintsResponse, Message, PeerInfo, Query, QueryRequest, TrustId};
-use crate::seeds::SEEDS;
 
 #[cfg(feature = "signing")]
 use libveritas::{
     builder::MessageBuilder,
     msg::ChainProof,
-    sip7::{SIG_PRIMARY_ZONE, RecordSet}
+    sip7::{RecordSet, SIG_PRIMARY_ZONE},
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -35,11 +40,12 @@ impl ScanParams {
     /// Parse a `veritas://scan?id={hex}` URI.
     pub fn parse(uri: &str) -> Result<Self> {
         let uri = uri.trim();
-        let query = uri.strip_prefix("veritas://scan?")
-            .ok_or_else(|| std::io::Error::new(
+        let query = uri.strip_prefix("veritas://scan?").ok_or_else(|| {
+            std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "expected veritas://scan?... URI",
-            ))?;
+            )
+        })?;
 
         let mut id = None;
         for pair in query.split('&') {
@@ -51,10 +57,9 @@ impl ScanParams {
         }
 
         Ok(Self {
-            id: id.ok_or_else(|| std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "missing id parameter",
-            ))?,
+            id: id.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "missing id parameter")
+            })?,
         })
     }
 }
@@ -93,7 +98,7 @@ impl AnchorPool {
         all.extend_from_slice(&self.trusted);
         all.extend_from_slice(&self.semi_trusted);
         all.extend_from_slice(&self.observed);
-        all.sort_by(|a, b| b.block.height.cmp(&a.block.height));
+        all.sort_by_key(|a| std::cmp::Reverse(a.block.height));
         all.dedup_by_key(|a| a.block.height);
         all
     }
@@ -152,6 +157,12 @@ pub struct Resolved {
     pub relays: Vec<String>,
 }
 
+impl Default for Fabric {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Fabric {
     /// Create a new client with the default seeds.
     pub fn new() -> Self {
@@ -190,7 +201,7 @@ impl Fabric {
                 return false;
             }
         }
-       true
+        true
     }
 
     fn are_roots_observed(&self, roots: &[TrustId]) -> bool {
@@ -263,17 +274,29 @@ impl Fabric {
 
     /// The trusted trust id, pinned explicitly with trust()
     pub fn trusted(&self) -> Option<TrustId> {
-        self.trusted.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
+        self.trusted
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|t| TrustId::from(t.id))
     }
 
     /// The latest trust id observed from peers, if any.
     pub fn observed(&self) -> Option<TrustId> {
-        self.observed.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
+        self.observed
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|t| TrustId::from(t.id))
     }
 
     /// The semi-trusted trust id, if any.
     pub fn semi_trusted(&self) -> Option<TrustId> {
-        self.semi_trusted.lock().unwrap().as_ref().map(|t| TrustId::from(t.id))
+        self.semi_trusted
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|t| TrustId::from(t.id))
     }
 
     /// Pin trust directly from an AnchorSet. No network requests.
@@ -283,7 +306,8 @@ impl Fabric {
         let id = TrustId::from(trust_set.id);
         let mut pool = self.anchor_pool.lock().unwrap();
         pool.trusted = set.entries.clone();
-        let v = Veritas::new().with_anchors(pool.merged())
+        let v = Veritas::new()
+            .with_anchors(pool.merged())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))?;
         *self.veritas.lock().unwrap() = v;
         *self.trusted.lock().unwrap() = Some(trust_set);
@@ -323,9 +347,7 @@ impl Fabric {
                 let peers = self.pool.shuffled_urls_n(4);
                 (*id, peers)
             }
-            TrustKind::Observed => {
-                fetch_latest_trust_id(&self.http, &self.seeds).await?
-            }
+            TrustKind::Observed => fetch_latest_trust_id(&self.http, &self.seeds).await?,
         };
 
         let ab = fetch_anchor_set(&self.http, id, &peers).await?;
@@ -400,12 +422,13 @@ impl Fabric {
         Ok(())
     }
 
-
     /// Resolve a single handle and return its verified Zone.
     /// Supports dotted names like `hello.alice@bitcoin`.
     pub async fn resolve(&self, handle: &str) -> Result<Option<Resolved>> {
         let rb = self.resolve_all(&[handle]).await?;
-        let zone = rb.zones.into_iter()
+        let zone = rb
+            .zones
+            .into_iter()
             .find(|z| z.handle.to_string() == handle);
         Ok(zone.map(|z| Resolved {
             zone: z,
@@ -427,17 +450,12 @@ impl Fabric {
         for url in &relays {
             // 1. Fetch reverse mapping
             let reverse_url = format!("{url}/reverse?ids={num_id}");
-            let records: Vec<crate::ReverseRecord> = match self.http
-                .get(&reverse_url)
-                .send()
-                .await
+            let records: Vec<crate::ReverseRecord> = match self.http.get(&reverse_url).send().await
             {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json().await {
-                        Ok(r) => r,
-                        Err(_) => continue,
-                    }
-                }
+                Ok(resp) if resp.status().is_success() => match resp.json().await {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                },
                 _ => continue,
             };
 
@@ -458,9 +476,7 @@ impl Fabric {
             };
 
             // 3. Verify num_id matches
-            let zone_num_id = resolved.zone.num_id
-                .as_ref()
-                .map(|id| id.to_string());
+            let zone_num_id = resolved.zone.num_id.as_ref().map(|id| id.to_string());
             if zone_num_id.as_deref() != Some(num_id) {
                 last_err = Some(Error::Decode(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -492,17 +508,11 @@ impl Fabric {
         for url in &relays {
             // 1. Fetch addr index
             let addr_url = format!("{url}/addrs?name={name}&addr={addr}");
-            let addr_match: crate::AddrMatch = match self.http
-                .get(&addr_url)
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json().await {
-                        Ok(r) => r,
-                        Err(_) => continue,
-                    }
-                }
+            let addr_match: crate::AddrMatch = match self.http.get(&addr_url).send().await {
+                Ok(resp) if resp.status().is_success() => match resp.json().await {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                },
                 _ => continue,
             };
 
@@ -511,9 +521,7 @@ impl Fabric {
             }
 
             // 2. Resolve forward using the rev names
-            let rev_names: Vec<String> = addr_match.handles.iter()
-                .map(|e| e.rev.clone())
-                .collect();
+            let rev_names: Vec<String> = addr_match.handles.iter().map(|e| e.rev.clone()).collect();
             let refs: Vec<&str> = rev_names.iter().map(|s| s.as_str()).collect();
             let batch = match self.resolve_all(&refs).await {
                 Ok(b) => b,
@@ -524,13 +532,18 @@ impl Fabric {
             };
 
             // 3. Filter to zones that actually have the matching addr record
-            let matching_zones: Vec<Zone> = batch.zones.into_iter()
+            let matching_zones: Vec<Zone> = batch
+                .zones
+                .into_iter()
                 .filter(|zone| {
-                    zone.records.iter()
-                        .map(|mut rrs| rrs.any(|r| {
-                            matches!(r, libveritas::sip7::ParsedRecord::Addr { key, value }
+                    zone.records
+                        .iter()
+                        .map(|mut rrs| {
+                            rrs.any(|r| {
+                                matches!(r, libveritas::sip7::ParsedRecord::Addr { key, value }
                                 if key == name && value.iter().next() == Some(addr))
-                        }))
+                            })
+                        })
                         .unwrap_or(false)
                 })
                 .collect();
@@ -555,7 +568,8 @@ impl Fabric {
 
     /// Resolve multiple handles, including nested names like `hello.alice@bitcoin`.
     pub async fn resolve_all(&self, handles: &[&str]) -> Result<ResolvedBatch> {
-        let snames: Vec<SName> = handles.iter()
+        let snames: Vec<SName> = handles
+            .iter()
             .filter_map(|h| SName::try_from(*h).ok())
             .collect();
 
@@ -627,14 +641,16 @@ impl Fabric {
     async fn resolve_flat(&self, handles: &[&str]) -> Result<(VerifiedMessage, String)> {
         let mut by_space: HashMap<String, Vec<String>> = HashMap::new();
         for &h in handles {
-            let sname = SName::try_from(h)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
-            let space = sname.space()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{h}: no space")))?
+            let sname = SName::try_from(h).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+            })?;
+            let space = sname
+                .space()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{h}: no space"))
+                })?
                 .to_string();
-            let subspace = sname.subspace()
-                .map(|l| l.to_string())
-                .unwrap_or_default();
+            let subspace = sname.subspace().map(|l| l.to_string()).unwrap_or_default();
             by_space.entry(space).or_default().push(subspace);
         }
 
@@ -709,7 +725,10 @@ impl Fabric {
 
         let mut last_err = Error::NoPeers;
         for url in relays {
-            let mut req = self.http.get(&format!("{url}/query")).query(&[("q", &q_param)]);
+            let mut req = self
+                .http
+                .get(format!("{url}/query"))
+                .query(&[("q", &q_param)]);
             if !hints_param.is_empty() {
                 req = req.query(&[("hints", &hints_param)]);
             }
@@ -742,11 +761,23 @@ impl Fabric {
                     continue;
                 }
             };
-            let msg = Message::from_slice(&bytes).map_err(|e| Error::Decode(
-                std::io::Error::new(e.kind(), format!("{url}/query: decoding message: {e}"))
-            ))?;
-            let options = if self.dev_mode { libveritas::VERIFY_DEV_MODE } else { 0 };
-            match self.veritas.lock().unwrap().verify_with_options(ctx, msg, options) {
+            let msg = Message::from_slice(&bytes).map_err(|e| {
+                Error::Decode(std::io::Error::new(
+                    e.kind(),
+                    format!("{url}/query: decoding message: {e}"),
+                ))
+            })?;
+            let options = if self.dev_mode {
+                libveritas::VERIFY_DEV_MODE
+            } else {
+                0
+            };
+            match self
+                .veritas
+                .lock()
+                .unwrap()
+                .verify_with_options(ctx, msg, options)
+            {
                 Ok(res) => {
                     self.pool.mark_alive(url);
                     return Ok((res, url.clone()));
@@ -778,13 +809,16 @@ impl Fabric {
                 let http = self.http.clone();
                 let hints_url = format!("{url}/hints");
                 let q = hints_query.clone();
-                tasks.push((url.clone(), tokio::spawn(async move {
-                    let resp = http.get(&hints_url).query(&[("q", &q)]).send().await.ok()?;
-                    if !resp.status().is_success() {
-                        return None;
-                    }
-                    resp.json::<HintsResponse>().await.ok()
-                })));
+                tasks.push((
+                    url.clone(),
+                    tokio::spawn(async move {
+                        let resp = http.get(&hints_url).query(&[("q", &q)]).send().await.ok()?;
+                        if !resp.status().is_success() {
+                            return None;
+                        }
+                        resp.json::<HintsResponse>().await.ok()
+                    }),
+                ));
             }
 
             for (url, task) in tasks {
@@ -878,10 +912,12 @@ impl Fabric {
                     let body = resp.text().await.unwrap_or_default();
                     last_err = Some(Error::Relay { status, body });
                 }
-                Err(e) => last_err = Some(Error::Decode(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionRefused,
-                    format!("POST {msg_url}: {e}"),
-                ))),
+                Err(e) => {
+                    last_err = Some(Error::Decode(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        format!("POST {msg_url}: {e}"),
+                    )))
+                }
             }
         }
 
@@ -1005,31 +1041,30 @@ fn epoch_hint_from_zone(zone: &Zone) -> Option<EpochHint> {
 
 async fn fetch_peers(http: &reqwest::Client, relay_url: &str) -> Result<Vec<PeerInfo>> {
     let url = format!("{relay_url}/peers");
-    let resp = http.get(&url).send().await
-        .map_err(|e| Error::Decode(std::io::Error::new(
+    let resp = http.get(&url).send().await.map_err(|e| {
+        Error::Decode(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
             format!("GET {url}: {e}"),
-        )))?;
+        ))
+    })?;
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
         return Err(Error::Relay { status, body });
     }
-    resp.json().await.map_err(|e| Error::Decode(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        format!("GET {url}: {e}"),
-    )))
+    resp.json().await.map_err(|e| {
+        Error::Decode(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("GET {url}: {e}"),
+        ))
+    })
 }
-
 
 impl RelayPool {
     fn new(urls: impl IntoIterator<Item = String>) -> Self {
         let entries = urls
             .into_iter()
-            .map(|url| RelayEntry {
-                url,
-                failures: 0,
-            })
+            .map(|url| RelayEntry { url, failures: 0 })
             .collect();
         Self {
             inner: Mutex::new(entries),
@@ -1069,10 +1104,7 @@ impl RelayPool {
         let existing: HashSet<String> = entries.iter().map(|e| e.url.clone()).collect();
         for url in new_urls {
             if !existing.contains(url.as_str()) {
-                entries.push(RelayEntry {
-                    url,
-                    failures: 0,
-                });
+                entries.push(RelayEntry { url, failures: 0 });
             }
         }
     }
@@ -1082,7 +1114,12 @@ impl RelayPool {
     }
 
     pub fn urls(&self) -> Vec<String> {
-        self.inner.lock().unwrap().iter().map(|e| e.url.clone()).collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| e.url.clone())
+            .collect()
     }
 }
 
@@ -1121,14 +1158,20 @@ impl From<MessageError> for Error {
 
 impl From<hex::FromHexError> for Error {
     fn from(e: hex::FromHexError) -> Self {
-        Error::Decode(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        Error::Decode(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            e.to_string(),
+        ))
     }
 }
 
 /// Fetch latest anchor set hash from the specified set of peers
 ///
 /// Returns: (<root-hash>, <peers...>)
-async fn fetch_latest_trust_id(http: &reqwest::Client, peers: &[String]) -> Result<(TrustId, Vec<String>)> {
+async fn fetch_latest_trust_id(
+    http: &reqwest::Client,
+    peers: &[String],
+) -> Result<(TrustId, Vec<String>)> {
     let mut votes: HashMap<(String, u32), Vec<String>> = HashMap::new();
     let mut last_err: Option<Error> = None;
 
@@ -1167,7 +1210,10 @@ async fn fetch_latest_trust_id(http: &reqwest::Client, peers: &[String]) -> Resu
             .unwrap_or(0);
 
         if let Some(root) = root {
-            votes.entry((root, height)).or_default().push(url.to_string());
+            votes
+                .entry((root, height))
+                .or_default()
+                .push(url.to_string());
         }
     }
 
@@ -1180,8 +1226,6 @@ async fn fetch_latest_trust_id(http: &reqwest::Client, peers: &[String]) -> Resu
     Ok((TrustId::from_str(&hash)?, peers))
 }
 
-
-
 async fn fetch_anchor_set(
     http: &reqwest::Client,
     trust_id: TrustId,
@@ -1190,10 +1234,7 @@ async fn fetch_anchor_set(
     let mut last_err: Option<Error> = None;
     for url in peers {
         let anchor_url = format!("{url}/anchors?root={trust_id}");
-        let resp = match http
-            .get(&anchor_url)
-            .send()
-            .await {
+        let resp = match http.get(&anchor_url).send().await {
             Ok(r) => r,
             Err(e) => {
                 last_err = Some(Error::Decode(std::io::Error::new(
@@ -1240,4 +1281,3 @@ async fn fetch_anchor_set(
 
     Err(last_err.unwrap_or(Error::NoPeers))
 }
-

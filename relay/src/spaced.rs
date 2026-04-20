@@ -1,13 +1,13 @@
-#[cfg(any(test, feature = "testutil"))]
-use std::ops::Deref;
-#[cfg(any(test, feature = "testutil"))]
-use std::sync::Mutex;
 use libveritas::cert::{NumsSubtree, SpacesSubtree};
 use libveritas::msg::ChainProof;
 use spacedb::subtree::SubTree;
 use spaces_client::jsonrpsee::http_client::HttpClient;
 use spaces_client::rpc::RpcClient;
 use spaces_nums::{ChainProofRequest, RootAnchor};
+#[cfg(any(test, feature = "testutil"))]
+use std::ops::Deref;
+#[cfg(any(test, feature = "testutil"))]
+use std::sync::Mutex;
 
 pub struct SpacedClient {
     client: HttpClient,
@@ -28,15 +28,17 @@ impl SpacedClient {
     pub fn mock((proof, anchors): (ChainProof, Vec<RootAnchor>)) -> Self {
         use spaces_client::jsonrpsee::http_client::HttpClientBuilder;
         Self {
-            client: HttpClientBuilder::default().build("http://nothanks.invalid").unwrap(),
-            mock_chain_proof:  Mutex::new(Some((proof, anchors))),
+            client: HttpClientBuilder::default()
+                .build("http://nothanks.invalid")
+                .unwrap(),
+            mock_chain_proof: Mutex::new(Some((proof, anchors))),
         }
     }
 
     pub async fn get_root_anchors(&self) -> anyhow::Result<Vec<RootAnchor>> {
         #[cfg(any(test, feature = "testutil"))]
         if let Some((_, anchors)) = &self.mock_chain_proof.lock().unwrap().deref() {
-            return Ok(anchors.clone())
+            return Ok(anchors.clone());
         }
         Ok(self.client.get_root_anchors().await?)
     }
@@ -44,7 +46,7 @@ impl SpacedClient {
     pub async fn prove(&self, req: &ChainProofRequest) -> anyhow::Result<ChainProof> {
         #[cfg(any(test, feature = "testutil"))]
         if let Some((p, _)) = &self.mock_chain_proof.lock().unwrap().deref() {
-            return Ok(p.clone())
+            return Ok(p.clone());
         }
 
         let res = self.client.build_chain_proof(req.clone(), None).await?;

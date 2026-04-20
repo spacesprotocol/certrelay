@@ -4,7 +4,10 @@ use secp256k1::{Keypair, Message, Secp256k1, XOnlyPublicKey};
 ///
 /// Takes a 32-byte signing ID (e.g. from `unsigned.signing_id`) and a 32-byte secret key.
 /// Returns a 64-byte signature.
-pub fn sign_schnorr(digest: &[u8; 32], secret_key: &[u8; 32]) -> Result<[u8; 64], secp256k1::Error> {
+pub fn sign_schnorr(
+    digest: &[u8; 32],
+    secret_key: &[u8; 32],
+) -> Result<[u8; 64], secp256k1::Error> {
     let secp = Secp256k1::new();
     let keypair = Keypair::from_seckey_slice(&secp, secret_key)?;
     let message = Message::from_digest(*digest);
