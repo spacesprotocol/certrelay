@@ -21,7 +21,7 @@ For documentation on using Fabric to resolve handles, publish records, and verif
 
 ```bash
 # Rust
-cargo add fabric-rs
+cargo add fabric-resolver
 
 # JavaScript / TypeScript
 npm install @spacesprotocol/fabric-web
