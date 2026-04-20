@@ -43,7 +43,7 @@ commit_parsers = [
 
 # Published to crates.io
 [[package]]
-name = "fabric-rs"
+name = "fabric-resolver"
 publish = true
 git_release_enable = true
 git_release_latest = false

@@ -13,31 +13,7 @@ The protocol is plain HTTP — relays are queryable from browsers, mobile apps, 
 
 ## Fabric Client
 
-For documentation on using Fabric to resolve handles, publish records, and verify identities, see:
-
-**[spacesprotocol.org/docs](https://spacesprotocol.org/docs)**
-
-### Quick Start
-
-```bash
-# Rust
-cargo add fabric-rs
-
-# JavaScript / TypeScript
-npm install @spacesprotocol/fabric-web
-
-# Go
-go get github.com/spacesprotocol/fabric-go
-
-# Python
-pip install fabric-resolver
-
-# Kotlin
-implementation("org.spacesprotocol:fabric:0.1.0")
-
-# Swift
-.package(url: "https://github.com/spacesprotocol/fabric-swift.git", from: "0.1.0")
-```
+For documentation on using Fabric to resolve handles, publish records, and verify identities, see **[spacesprotocol.org/docs](https://spacesprotocol.org/docs)**.
 
 ## Running a Relay
 

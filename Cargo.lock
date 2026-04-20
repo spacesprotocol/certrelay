@@ -1132,7 +1132,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabric-rs"
+name = "fabric-resolver"
 version = "0.1.1"
 dependencies = [
  "dashmap",
@@ -1788,7 +1788,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "borsh",
- "fabric-rs",
+ "fabric-resolver",
  "hex",
  "libveritas",
  "libveritas_testutil",
@@ -2759,7 +2759,7 @@ dependencies = [
  "borsh",
  "clap",
  "env_logger",
- "fabric-rs",
+ "fabric-resolver",
  "governor",
  "hex",
  "libveritas",

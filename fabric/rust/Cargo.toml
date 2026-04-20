@@ -1,5 +1,5 @@
 [package]
-name = "fabric-rs"
+name = "fabric-resolver"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 description = "Client library for the Spaces protocol certificate relay network."
-documentation = "https://docs.rs/fabric-rs"
+documentation = "https://docs.rs/fabric-resolver"
 keywords = ["spaces", "fabric", "dns", "certificates"]
 categories = ["network-programming"]
 

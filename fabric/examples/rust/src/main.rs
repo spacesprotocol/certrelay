@@ -1,5 +1,5 @@
 // <doc:install>
-// cargo add fabric-rs
+// cargo add fabric-resolver
 // </doc:install>
 
 use fabric::client::{Fabric};

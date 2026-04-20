@@ -12,7 +12,7 @@ homepage = "https://spacesprotocol.org"
 authors = ["Buffrr <contact@buffrr.dev>"]
 
 [workspace.dependencies]
-fabric-rs = { path = "fabric/rust", version = "0.1.1" }
+fabric-resolver = { path = "fabric/rust", version = "0.1.1" }
 libveritas = { version = "0.1" }
 libveritas_testutil = { version = "0.1" }
 
