@@ -199,14 +199,13 @@ class Fabric(
 
     // -- Resolution --
 
-    fun resolve(handle: String): Resolved {
+    fun resolve(handle: String): Resolved? {
         val batch = resolveAll(listOf(handle))
-        val zone = batch.zones.find { it.handle == handle }
-            ?: throw FabricError("decode", "$handle not found")
+        val zone = batch.zones.find { it.handle == handle } ?: return null
         return Resolved(zone, batch.roots)
     }
 
-    fun resolveById(numId: String): Resolved {
+    fun resolveById(numId: String): Resolved? {
         bootstrap()
         val urls = pool.shuffledUrls(4)
         var lastErr: Exception = FabricError("no_peers", "reverse resolution failed")
@@ -231,12 +230,7 @@ class Fabric(
 
             val entry = entries.find { it.id == numId } ?: continue
 
-            val resolved = try {
-                resolve(entry.name)
-            } catch (e: Exception) {
-                lastErr = e
-                continue
-            }
+            val resolved = resolve(entry.name) ?: continue
 
             if (resolved.zone.numId != numId) {
                 lastErr = FabricError("verify", "reverse mismatch: expected $numId, got ${resolved.zone.numId}")
@@ -246,7 +240,7 @@ class Fabric(
             return resolved
         }
 
-        throw lastErr
+        return null
     }
 
     fun searchAddr(name: String, addr: String): ResolvedBatch {
