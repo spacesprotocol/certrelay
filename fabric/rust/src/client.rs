@@ -638,7 +638,11 @@ impl Fabric {
     }
 
     /// Resolve a flat list of non-dotted handles in a single relay query.
-    async fn resolve_flat(&self, handles: &[&str], hints: bool) -> Result<(VerifiedMessage, String)> {
+    async fn resolve_flat(
+        &self,
+        handles: &[&str],
+        hints: bool,
+    ) -> Result<(VerifiedMessage, String)> {
         let mut by_space: HashMap<String, Vec<String>> = HashMap::new();
         for &h in handles {
             let sname = SName::try_from(h).map_err(|e| {
