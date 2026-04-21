@@ -300,7 +300,7 @@ class Fabric(
         var batch = lookup.start()
         while (batch.isNotEmpty()) {
             if (batch == prevBatch) break
-            val verified = resolveFlat(batch)
+            val verified = resolveFlat(batch, true)
             val zones = verified.zones()
             prevBatch = batch
             batch = lookup.advance(zones)
@@ -319,7 +319,7 @@ class Fabric(
         var batch = lookup.start()
         while (batch.isNotEmpty()) {
             if (batch == prevBatch) break
-            val verified = resolveFlat(batch)
+            val verified = resolveFlat(batch, false)
             allCertBytes.addAll(verified.certificates())
             val zones = verified.zones()
             prevBatch = batch
@@ -329,7 +329,7 @@ class Fabric(
         return createCertificateChain(handle, allCertBytes)
     }
 
-    private fun resolveFlat(handles: List<String>): VerifiedMessage {
+    private fun resolveFlat(handles: List<String>, hints: Boolean): VerifiedMessage {
         val bySpace = mutableMapOf<String, MutableList<String>>()
         for (h in handles) {
             val (space, label) = parseHandle(h)
@@ -339,9 +339,11 @@ class Fabric(
         val queries = mutableListOf<Query>()
         for ((space, labels) in bySpace) {
             var epochHint: EpochHint? = null
-            synchronized(lock) {
-                zoneCache[space]?.let { cached ->
-                    epochHintFromZone(cached)?.let { epochHint = it }
+            if (hints) {
+                synchronized(lock) {
+                    zoneCache[space]?.let { cached ->
+                        epochHintFromZone(cached)?.let { epochHint = it }
+                    }
                 }
             }
             queries.add(Query(space = space, handles = labels, epochHint = epochHint))

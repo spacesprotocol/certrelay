@@ -411,7 +411,7 @@ public final class Fabric: @unchecked Sendable {
         var batch = lookup.start()
         while !batch.isEmpty {
             if batch == prevBatch { break }
-            let verified = try await resolveFlat(batch)
+            let verified = try await resolveFlat(batch, hints: true)
             let zones = verified.zones()
             prevBatch = batch
             batch = try lookup.advance(zones: zones)
@@ -432,7 +432,7 @@ public final class Fabric: @unchecked Sendable {
         var batch = lookup.start()
         while !batch.isEmpty {
             if batch == prevBatch { break }
-            let verified = try await resolveFlat(batch)
+            let verified = try await resolveFlat(batch, hints: false)
             allCertBytes.append(contentsOf: verified.certificates())
             let zones = verified.zones()
             prevBatch = batch
@@ -472,7 +472,7 @@ public final class Fabric: @unchecked Sendable {
     }
 
     /// Resolve a flat list of non-dotted handles in a single relay query.
-    private func resolveFlat(_ handles: [String]) async throws -> VerifiedMessage {
+    private func resolveFlat(_ handles: [String], hints: Bool) async throws -> VerifiedMessage {
         var bySpace = [String: [String]]()
         for h in handles {
             let parsed = parseHandle(h)
@@ -482,14 +482,16 @@ public final class Fabric: @unchecked Sendable {
         var queries = [Query]()
         for (space, labels) in bySpace {
             var q = Query(space: space, handles: labels)
-            lock.lock()
-            let cached = zoneCache[space]
-            lock.unlock()
-            if let cached, case .exists(let stateRoot, _, _, let blockHeight, _) = cached.commitment {
-                q.epoch_hint = EpochHint(
-                    root: stateRoot.map { String(format: "%02x", $0) }.joined(),
-                    height: blockHeight
-                )
+            if hints {
+                lock.lock()
+                let cached = zoneCache[space]
+                lock.unlock()
+                if let cached, case .exists(let stateRoot, _, _, let blockHeight, _) = cached.commitment {
+                    q.epoch_hint = EpochHint(
+                        root: stateRoot.map { String(format: "%02x", $0) }.joined(),
+                        height: blockHeight
+                    )
+                }
             }
             queries.append(q)
         }

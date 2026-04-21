@@ -587,7 +587,7 @@ impl Fabric {
             }
             let strs: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
             let refs: Vec<&str> = strs.iter().map(|s| s.as_str()).collect();
-            let (verified, relay_url) = self.resolve_flat(&refs).await?;
+            let (verified, relay_url) = self.resolve_flat(&refs, true).await?;
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_zones.extend(verified.zones);
@@ -622,7 +622,7 @@ impl Fabric {
             }
             let strs: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
             let refs: Vec<&str> = strs.iter().map(|s| s.as_str()).collect();
-            let (verified, _relay_url) = self.resolve_flat(&refs).await?;
+            let (verified, _relay_url) = self.resolve_flat(&refs, false).await?;
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_verified.push(verified);
@@ -638,7 +638,11 @@ impl Fabric {
     }
 
     /// Resolve a flat list of non-dotted handles in a single relay query.
-    async fn resolve_flat(&self, handles: &[&str]) -> Result<(VerifiedMessage, String)> {
+    async fn resolve_flat(
+        &self,
+        handles: &[&str],
+        hints: bool,
+    ) -> Result<(VerifiedMessage, String)> {
         let mut by_space: HashMap<String, Vec<String>> = HashMap::new();
         for &h in handles {
             let sname = SName::try_from(h).map_err(|e| {
@@ -658,9 +662,11 @@ impl Fabric {
             .into_iter()
             .map(|(space, handles)| {
                 let mut q = Query::new(space.clone(), handles);
-                if let Some(zone) = self.root_cache.get(&space) {
-                    if let Some(hint) = epoch_hint_from_zone(&zone) {
-                        q = q.with_epoch_hint(hint);
+                if hints {
+                    if let Some(zone) = self.root_cache.get(&space) {
+                        if let Some(hint) = epoch_hint_from_zone(&zone) {
+                            q = q.with_epoch_hint(hint);
+                        }
                     }
                 }
                 q
