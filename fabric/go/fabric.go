@@ -590,7 +590,7 @@ func (f *Fabric) ResolveAll(handles []string) (ResolvedBatch, error) {
 		if slicesEqual(batch, prevBatch) {
 			break
 		}
-		verified, err := f.resolveFlat(batch)
+		verified, err := f.resolveFlat(batch, true)
 		if err != nil {
 			return ResolvedBatch{}, err
 		}
@@ -629,7 +629,7 @@ func (f *Fabric) Export(handle string) ([]byte, error) {
 		if slicesEqual(batch, prevBatch) {
 			break
 		}
-		verified, err := f.resolveFlat(batch)
+		verified, err := f.resolveFlat(batch, false)
 		if err != nil {
 			return nil, err
 		}
@@ -699,7 +699,7 @@ func (f *Fabric) Publish(cert []byte, records []byte, secretKey []byte, primary 
 	return f.Broadcast(msg)
 }
 
-func (f *Fabric) resolveFlat(handles []string) (*libveritas.VerifiedMessage, error) {
+func (f *Fabric) resolveFlat(handles []string, hints bool) (*libveritas.VerifiedMessage, error) {
 	bySpace := make(map[string][]string)
 	for _, h := range handles {
 		space, label := parseHandle(h)
@@ -709,13 +709,15 @@ func (f *Fabric) resolveFlat(handles []string) (*libveritas.VerifiedMessage, err
 	var queries []Query
 	for space, labels := range bySpace {
 		q := Query{Space: space, Handles: labels}
-		f.mu.Lock()
-		if cached, ok := f.zoneCache[space]; ok {
-			if hint := epochHintFromZone(cached); hint != nil {
-				q.EpochHint = hint
+		if hints {
+			f.mu.Lock()
+			if cached, ok := f.zoneCache[space]; ok {
+				if hint := epochHintFromZone(cached); hint != nil {
+					q.EpochHint = hint
+				}
 			}
+			f.mu.Unlock()
 		}
-		f.mu.Unlock()
 		queries = append(queries, q)
 	}
 

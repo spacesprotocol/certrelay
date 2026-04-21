@@ -324,7 +324,7 @@ class Fabric:
         while batch:
             if batch == prev_batch:
                 break
-            verified = self._resolve_flat(batch)
+            verified = self._resolve_flat(batch, hints=True)
             zones = verified.zones()
             prev_batch = batch
             batch = lookup.advance(zones)
@@ -344,7 +344,7 @@ class Fabric:
         while batch:
             if batch == prev_batch:
                 break
-            verified = self._resolve_flat(batch)
+            verified = self._resolve_flat(batch, hints=False)
             all_cert_bytes.extend(verified.certificates())
             zones = verified.zones()
             prev_batch = batch
@@ -514,7 +514,7 @@ class Fabric:
             else:
                 self._observed = trust_set
 
-    def _resolve_flat(self, handles: list[str]) -> lv.VerifiedMessage:
+    def _resolve_flat(self, handles: list[str], *, hints: bool = True) -> lv.VerifiedMessage:
         by_space: dict[str, list[str]] = {}
         for h in handles:
             space, label = _parse_handle(h)
@@ -523,12 +523,13 @@ class Fabric:
         queries = []
         for space, labels in by_space.items():
             q = _Query(space=space, handles=labels)
-            with self._lock:
-                cached = self._zone_cache.get(space)
-                if cached is not None:
-                    hint = _epoch_hint_from_zone(cached)
-                    if hint is not None:
-                        q.epoch_hint = hint
+            if hints:
+                with self._lock:
+                    cached = self._zone_cache.get(space)
+                    if cached is not None:
+                        hint = _epoch_hint_from_zone(cached)
+                        if hint is not None:
+                            q.epoch_hint = hint
             queries.append(q)
 
         return self._query(_QueryRequest(queries=queries))

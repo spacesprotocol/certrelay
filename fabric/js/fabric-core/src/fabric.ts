@@ -557,7 +557,7 @@ export class Fabric {
     let batch = lookup.start();
     while (batch.length > 0) {
       if (arraysEqual(batch, prevBatch)) break;
-      const verified = await this.resolveFlat(batch);
+      const verified = await this.resolveFlat(batch, false);
       allCertBytes.push(...verified.certificates());
       const zones = verified.zones();
       prevBatch = batch;
@@ -568,7 +568,7 @@ export class Fabric {
   }
 
   /** Resolve a flat list of non-dotted handles in a single relay query. */
-  private async resolveFlat(handles: string[]): Promise<VerifiedMessageHandle> {
+  private async resolveFlat(handles: string[], hints = true): Promise<VerifiedMessageHandle> {
     const bySpace = new Map<string, string[]>();
     for (const h of handles) {
       const { space, label } = parseHandle(h);
@@ -580,14 +580,16 @@ export class Fabric {
     const queries: Query[] = [];
     for (const [space, labels] of bySpace) {
       const q: Query = { space, handles: labels };
-      const cached = this.zoneCache.get(space);
-      if (cached) {
-        const json = cached.zone.toJson();
-        if (json?.commitment?.onchain) {
-          q.epoch_hint = {
-            root: json.commitment.onchain.state_root,
-            height: json.commitment.onchain.block_height,
-          };
+      if (hints) {
+        const cached = this.zoneCache.get(space);
+        if (cached) {
+          const json = cached.zone.toJson();
+          if (json?.commitment?.onchain) {
+            q.epoch_hint = {
+              root: json.commitment.onchain.state_root,
+              height: json.commitment.onchain.block_height,
+            };
+          }
         }
       }
       queries.push(q);
