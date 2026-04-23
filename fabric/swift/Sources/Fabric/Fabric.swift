@@ -65,6 +65,12 @@ public struct Resolved {
 public struct ResolvedBatch {
     public let zones: [Zone]
     public let roots: [String]  // hex-encoded root IDs
+
+    /// Look up a specific handle from the batch.
+    public func get(_ handle: String) -> Resolved? {
+        guard let zone = zones.first(where: { $0.handle == handle }) else { return nil }
+        return Resolved(zone: zone, roots: roots)
+    }
 }
 
 // MARK: - Trust kind
@@ -263,6 +269,11 @@ public final class Fabric: @unchecked Sendable {
 
     /// Badge given sovereignty and roots.
     public func badgeFor(sovereignty: String, roots: [String]) -> VerificationBadge {
+        lock.lock()
+        let hasAny = trusted != nil || observed != nil || semiTrusted != nil
+        lock.unlock()
+        if !hasAny { return .unverified }
+
         let isTrusted = areRootsTrusted(roots)
         let isObserved = isTrusted || areRootsObserved(roots)
         let isSemiTrusted = isTrusted || areRootsSemiTrusted(roots)

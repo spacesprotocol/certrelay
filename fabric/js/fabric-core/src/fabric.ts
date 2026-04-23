@@ -22,6 +22,13 @@ export interface ResolvedBatch {
   roots: string[];  // hex-encoded
 }
 
+/** Look up a specific handle from a batch. */
+export function batchGet(batch: ResolvedBatch, handle: string): Resolved | undefined {
+  const zone = batch.zones.find(z => z.handle === handle);
+  if (!zone) return undefined;
+  return { zone, roots: batch.roots };
+}
+
 export interface FabricOptions {
   provider: VeritasProvider;
   seeds?: string[];
@@ -167,6 +174,57 @@ export class Fabric {
     return this.veritas;
   }
 
+  // ── State persistence ──
+
+  /** Export the current state as a JSON string for persistence. */
+  saveState(): string {
+    const zoneCacheObj: Record<string, any> = {};
+    for (const [key, entry] of this.zoneCache) {
+      zoneCacheObj[key] = entry.zone.toJson();
+    }
+    return JSON.stringify({
+      version: 1,
+      relays: this.pool.urls,
+      anchors: {
+        trusted: this.anchorEntries.trusted ?? [],
+        semi_trusted: this.anchorEntries.semiTrusted ?? [],
+        observed: this.anchorEntries.observed ?? [],
+      },
+      zone_cache: zoneCacheObj,
+    });
+  }
+
+  /** Restore state from a previously saved JSON string. */
+  loadState(json: string): void {
+    const state = JSON.parse(json);
+    if (state.relays?.length) {
+      this.pool.refresh(state.relays);
+    }
+    if (state.anchors) {
+      const a = state.anchors;
+      if (a.trusted?.length) this.anchorEntries.trusted = a.trusted;
+      if (a.semi_trusted?.length) this.anchorEntries.semiTrusted = a.semi_trusted;
+      if (a.observed?.length) this.anchorEntries.observed = a.observed;
+      this.rebuildVeritas();
+
+      // Recompute trust sets from anchors
+      if (this.anchorEntries.trusted && this.veritas) {
+        const anchors = this.provider.createAnchors(this.anchorEntries.trusted);
+        this._trusted = anchors.computeTrustSet();
+      }
+      if (this.anchorEntries.semiTrusted && this.veritas) {
+        const anchors = this.provider.createAnchors(this.anchorEntries.semiTrusted);
+        this._semiTrusted = anchors.computeTrustSet();
+      }
+      if (this.anchorEntries.observed && this.veritas) {
+        const anchors = this.provider.createAnchors(this.anchorEntries.observed);
+        this._observed = anchors.computeTrustSet();
+      }
+    }
+    // Zone cache restoration would require re-parsing zones from JSON
+    // which needs the provider. For now, zone cache is rebuilt on first resolve.
+  }
+
   // ── Trust ──
 
   /** Trust a specific trust ID. Fetches anchors matching the given ID. */
@@ -226,6 +284,10 @@ export class Fabric {
 
   /** Compute a verification badge given sovereignty type and roots. */
   badgeFor(sovereignty: string, roots: string[]): VerificationBadge {
+    if (!this._trusted && !this._observed && !this._semiTrusted) {
+      return "unverified";
+    }
+
     const isTrusted = this.areRootsTrusted(roots);
     const isObserved = isTrusted || this.areRootsObserved(roots);
     const isSemiTrusted = isTrusted || this.areRootsSemiTrusted(roots);

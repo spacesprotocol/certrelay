@@ -104,6 +104,27 @@ impl AnchorPool {
     }
 }
 
+/// Serializable snapshot of Fabric state for persistence.
+#[derive(Serialize, Deserialize)]
+pub struct FabricState {
+    pub version: u32,
+    pub relays: Vec<String>,
+    pub anchors: AnchorPoolState,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub zone_cache: HashMap<String, Zone>,
+}
+
+/// Anchor entries per trust source.
+#[derive(Serialize, Deserialize, Default)]
+pub struct AnchorPoolState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted: Vec<spaces_nums::RootAnchor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub semi_trusted: Vec<spaces_nums::RootAnchor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed: Vec<spaces_nums::RootAnchor>,
+}
+
 pub struct RelayPool {
     inner: Mutex<Vec<RelayEntry>>,
 }
@@ -150,6 +171,20 @@ pub struct ResolvedBatch {
     pub relays: Vec<String>,
 }
 
+impl ResolvedBatch {
+    /// Look up a specific handle from the batch.
+    pub fn get(&self, handle: &str) -> Option<Resolved> {
+        self.zones
+            .iter()
+            .find(|z| z.handle.to_string() == handle)
+            .map(|z| Resolved {
+                zone: z.clone(),
+                roots: self.roots.clone(),
+                relays: self.relays.clone(),
+            })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Resolved {
     pub zone: Zone,
@@ -189,6 +224,68 @@ impl Fabric {
     pub fn with_dev_mode(mut self) -> Self {
         self.dev_mode = true;
         self
+    }
+
+    /// Export the current state for persistence.
+    pub fn save_state(&self) -> FabricState {
+        let pool = self.anchor_pool.lock().unwrap();
+        let zone_cache: HashMap<String, Zone> = self
+            .root_cache
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        FabricState {
+            version: 1,
+            relays: self.pool.urls(),
+            anchors: AnchorPoolState {
+                trusted: pool.trusted.clone(),
+                semi_trusted: pool.semi_trusted.clone(),
+                observed: pool.observed.clone(),
+            },
+            zone_cache,
+        }
+    }
+
+    /// Create a Fabric instance from previously saved state.
+    /// Rebuilds trust sets and Veritas from the persisted anchors.
+    pub fn from_state(state: FabricState) -> Result<Self> {
+        let fabric = Self::new();
+
+        if !state.relays.is_empty() {
+            fabric.pool.refresh(state.relays);
+        }
+
+        {
+            let mut pool = fabric.anchor_pool.lock().unwrap();
+            pool.trusted = state.anchors.trusted;
+            pool.semi_trusted = state.anchors.semi_trusted;
+            pool.observed = state.anchors.observed;
+
+            if !pool.trusted.is_empty() {
+                *fabric.trusted.lock().unwrap() = Some(compute_trust_set(&pool.trusted));
+            }
+            if !pool.semi_trusted.is_empty() {
+                *fabric.semi_trusted.lock().unwrap() = Some(compute_trust_set(&pool.semi_trusted));
+            }
+            if !pool.observed.is_empty() {
+                *fabric.observed.lock().unwrap() = Some(compute_trust_set(&pool.observed));
+            }
+
+            let merged = pool.merged();
+            if !merged.is_empty() {
+                let v = Veritas::new().with_anchors(merged).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}"))
+                })?;
+                *fabric.veritas.lock().unwrap() = v;
+            }
+        }
+
+        for (key, zone) in state.zone_cache {
+            fabric.root_cache.insert(key, zone);
+        }
+
+        Ok(fabric)
     }
 
     fn are_roots_trusted(&self, roots: &[TrustId]) -> bool {
@@ -235,6 +332,13 @@ impl Fabric {
     }
 
     pub fn badge_for(&self, sov: SovereigntyState, roots: &[TrustId]) -> Badge {
+        let has_any_pool = self.trusted.lock().unwrap().is_some()
+            || self.observed.lock().unwrap().is_some()
+            || self.semi_trusted.lock().unwrap().is_some();
+        if !has_any_pool {
+            return Badge::Unverified;
+        }
+
         let is_trusted = self.are_roots_trusted(roots);
         let is_observed = is_trusted || self.are_roots_observed(roots);
         let is_semi_trusted = is_trusted || self.are_roots_semi_trusted(roots);

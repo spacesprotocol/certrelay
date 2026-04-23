@@ -110,6 +110,16 @@ type ResolvedBatch struct {
 	Roots []string // hex-encoded root IDs
 }
 
+// Get looks up a specific handle from the batch.
+func (b ResolvedBatch) Get(handle string) *Resolved {
+	for _, z := range b.Zones {
+		if z.Handle == handle {
+			return &Resolved{Zone: z, Roots: b.Roots}
+		}
+	}
+	return nil
+}
+
 type anchorPool struct {
 	trusted     string // raw entries JSON
 	semiTrusted string // raw entries JSON
@@ -254,6 +264,13 @@ func (f *Fabric) Badge(resolved Resolved) VerificationBadge {
 
 // BadgeFor returns the verification badge given sovereignty and root IDs.
 func (f *Fabric) BadgeFor(sovereignty string, roots []string) VerificationBadge {
+	f.mu.Lock()
+	hasAny := f.trusted != nil || f.observed != nil || f.semiTrusted != nil
+	f.mu.Unlock()
+	if !hasAny {
+		return BadgeUnverified
+	}
+
 	isTrusted := f.areRootsTrusted(roots)
 	isObserved := isTrusted || f.areRootsObserved(roots)
 	isSemiTrusted := isTrusted || f.areRootsSemiTrusted(roots)

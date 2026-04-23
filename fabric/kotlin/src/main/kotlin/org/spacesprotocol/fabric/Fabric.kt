@@ -41,7 +41,12 @@ data class PeerInfo(
 enum class VerificationBadge { Orange, Unverified, None }
 
 data class Resolved(val zone: Zone, val roots: List<String>)
-data class ResolvedBatch(val zones: List<Zone>, val roots: List<String>)
+data class ResolvedBatch(val zones: List<Zone>, val roots: List<String>) {
+    fun get(handle: String): Resolved? {
+        val zone = zones.find { it.handle == handle } ?: return null
+        return Resolved(zone, roots)
+    }
+}
 
 private val json = Json { ignoreUnknownKeys = true }
 
@@ -129,6 +134,9 @@ class Fabric(
         badgeFor(resolved.zone.sovereignty, resolved.roots)
 
     fun badgeFor(sovereignty: String, roots: List<String>): VerificationBadge {
+        val hasAny = synchronized(lock) { trusted != null || observed != null || semiTrusted != null }
+        if (!hasAny) return VerificationBadge.Unverified
+
         val isTrusted = areRootsTrusted(roots)
         val isObserved = isTrusted || areRootsObserved(roots)
         val isSemiTrusted = isTrusted || areRootsSemiTrusted(roots)

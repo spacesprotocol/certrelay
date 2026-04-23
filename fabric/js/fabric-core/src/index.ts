@@ -1,4 +1,4 @@
-export { Fabric, FabricError, parseScanUri } from "./fabric.js";
+export { Fabric, FabricError, parseScanUri, batchGet } from "./fabric.js";
 export type {
   FabricOptions,
   PeerInfo,

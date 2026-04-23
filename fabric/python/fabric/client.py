@@ -46,6 +46,13 @@ class ResolvedBatch:
     zones: list[lv.Zone]
     roots: list[str]  # hex-encoded root IDs
 
+    def get(self, handle: str) -> Resolved | None:
+        """Look up a specific handle from the batch."""
+        zone = next((z for z in self.zones if z.handle == handle), None)
+        if zone is None:
+            return None
+        return Resolved(zone=zone, roots=self.roots)
+
 
 @dataclass
 class _EpochHint:
@@ -210,6 +217,8 @@ class Fabric:
 
     def badge_for(self, sovereignty: str, roots: list[str]) -> str:
         """Return the verification badge given sovereignty and root IDs."""
+        if self._trusted is None and self._observed is None and self._semi_trusted is None:
+            return BADGE_UNVERIFIED
         is_trusted = self._are_roots_trusted(roots)
         is_observed = is_trusted or self._are_roots_observed(roots)
         is_semi_trusted = is_trusted or self._are_roots_semi_trusted(roots)

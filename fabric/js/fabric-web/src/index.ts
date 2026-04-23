@@ -53,6 +53,7 @@ export class Fabric extends FabricCore {
 export {
   FabricError,
   RelayPool,
+  batchGet,
   compareHints,
   DEFAULT_SEEDS,
 } from "@spacesprotocol/fabric-core";
