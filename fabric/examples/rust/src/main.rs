@@ -2,7 +2,7 @@
 // cargo add fabric-resolver
 // </doc:install>
 
-use fabric::client::{Fabric};
+use fabric::client::Fabric;
 use fabric::libveritas::builder::MessageBuilder;
 use fabric::libveritas::cert::CertificateChain;
 use fabric::libveritas::msg::ChainProof;
@@ -12,23 +12,22 @@ use fabric::signing::sign_schnorr;
 async fn example_resolve_intro() -> anyhow::Result<()> {
     // <doc:resolve-intro>
     let fabric = Fabric::new();
-    let resolved = fabric.resolve("alice@bitcoin").await?;
+    let zone = fabric.resolve("alice@bitcoin").await?;
     // </doc:resolve-intro>
-    let _ = resolved;
+    let _ = zone;
     Ok(())
 }
-
 
 /// Resolve a single handle
 async fn example_resolve() -> anyhow::Result<()> {
     // <doc:resolve>
     let fabric = Fabric::new();
-    let Some(resolved) = fabric.resolve("alice@bitcoin").await? else {
+    let Some(zone) = fabric.resolve("alice@bitcoin").await? else {
         println!("handle not found");
         return Ok(());
     };
 
-    println!("Handle found: {}", resolved.zone.handle);
+    println!("Handle found: {}", zone.handle);
     // </doc:resolve>
 
     Ok(())
@@ -41,9 +40,9 @@ async fn example_trust_and_verification() -> anyhow::Result<()> {
     // <doc:verification>
     // Before pinning a trust id: resolve uses observed (peer) state
     // badge() returns Unverified
-    let resolved = fabric.resolve("alice@bitcoin").await?
+    let zone = fabric.resolve("alice@bitcoin").await?
         .expect("handle exists");
-    fabric.badge(&resolved); // Unverified
+    fabric.badge(&zone); // Unverified
 
     // Pin trust from a QR scan
     let qr = "veritas://scan?id=14ef902621df01bdeee0b23fedf67458563a20df600af8979a4748dcd9d1b9f9";
@@ -52,8 +51,8 @@ async fn example_trust_and_verification() -> anyhow::Result<()> {
     fabric.trust_from_qr(qr).await?;
 
     // Does not require re-resolving, badge now checks
-    // whether resolved was against a trusted root
-    fabric.badge(&resolved); // Orange if handle is sovereign (final certificate)
+    // whether zone was verified against a trusted root
+    fabric.badge(&zone); // Orange if handle is sovereign (final certificate)
 
     // Or from a semi-trusted source (e.g. an explorer you trust with qr scanned over HTTPS)
     // .badge() will not show Orange for roots in this trust pool,
@@ -77,10 +76,10 @@ async fn example_trust_and_verification() -> anyhow::Result<()> {
 /// Unpack records from a resolved handle
 async fn example_unpack_records() -> anyhow::Result<()> {
     let fabric = Fabric::new();
-    let resolved = fabric.resolve("alice@bitcoin").await?.expect("handle exists");
+    let zone = fabric.resolve("alice@bitcoin").await?.expect("handle exists");
 
     // <doc:unpack-records>
-    for record in resolved.zone.records.iter()? {
+    for record in zone.records.iter()? {
         match record {
             ParsedRecord::Txt { key, value } => {
                 println!("txt {}={}", key, value.to_vec().join(", "))
@@ -101,11 +100,11 @@ async fn example_resolve_all() -> anyhow::Result<()> {
     let fabric = Fabric::new();
 
     // <doc:resolve-all>
-    let batch = fabric
+    let zones = fabric
         .resolve_all(&["alice@bitcoin", "bob@bitcoin"])
         .await?;
 
-    for zone in &batch.zones {
+    for zone in &zones {
         println!("{}: {:?}", zone.handle, zone.sovereignty);
     }
     // </doc:resolve-all>
@@ -159,12 +158,12 @@ async fn example_resolve_by_id() -> anyhow::Result<()> {
     let fabric = Fabric::new();
 
     // <doc:resolve-by-id>
-    let Some(resolved) = fabric.resolve_by_id("num1qx8dtlzq...").await? else {
+    let Some(zone) = fabric.resolve_by_id("num1qx8dtlzq...").await? else {
         println!("handle not found");
         return Ok(());
     };
 
-    println!("Handle found: {}", resolved.zone.handle);
+    println!("Handle found: {}", zone.handle);
     // </doc:resolve-by-id>
 
     Ok(())
@@ -175,11 +174,11 @@ async fn example_search_addr() -> anyhow::Result<()> {
     let fabric = Fabric::new();
 
     // <doc:search-addr>
-    let batch = fabric
+    let zones = fabric
         .search_addr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
         .await?;
 
-    for zone in &batch.zones {
+    for zone in &zones {
         println!("{}: {:?}", zone.handle, zone.sovereignty);
     }
     // </doc:search-addr>

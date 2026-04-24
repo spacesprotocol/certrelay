@@ -7,7 +7,7 @@ import Fabric
 func exampleResolveIntro() async throws {
     // <doc:resolve-intro>
     let fabric = Fabric()
-    let resolved = try await fabric.resolve("alice@bitcoin")
+    let zone = try await fabric.resolve("alice@bitcoin")
     // </doc:resolve-intro>
 }
 
@@ -15,12 +15,12 @@ func exampleResolveIntro() async throws {
 func exampleResolve() async throws {
     // <doc:resolve>
     let fabric = Fabric()
-    guard let resolved = try await fabric.resolve("alice@bitcoin") else {
+    guard let zone = try await fabric.resolve("alice@bitcoin") else {
         print("handle not found")
         return
     }
 
-    print("Handle found: \(resolved.zone.handle)")
+    print("Handle found: \(zone.handle)")
     // </doc:resolve>
 }
 
@@ -31,9 +31,9 @@ func exampleTrustAndVerification() async throws {
     // <doc:verification>
     // Before pinning a trust id: resolve uses observed (peer) state
     // badge() returns Unverified
-    let resolved = try await fabric.resolve("alice@bitcoin")!
+    let zone = try await fabric.resolve("alice@bitcoin")!
 
-    fabric.badge(resolved) // Unverified
+    fabric.badge(zone) // Unverified
 
     // Pin trust from a QR scan
     let qr = "veritas://scan?id=14ef902621df01bdeee0b23fedf67458563a20df600af8979a4748dcd9d1b9f9"
@@ -42,8 +42,8 @@ func exampleTrustAndVerification() async throws {
     try await fabric.trustFromQr(qr)
 
     // Does not require re-resolving, badge now checks
-    // whether resolved was against a trusted root
-    fabric.badge(resolved) // Orange if handle is sovereign (final certificate)
+    // whether zone was against a trusted root
+    fabric.badge(zone) // Orange if handle is sovereign (final certificate)
 
     // Or from a semi-trusted source (e.g. an explorer you trust with qr scanned over HTTPS)
     // .badge() will not show Orange for roots in this trust pool,
@@ -65,10 +65,10 @@ func exampleTrustAndVerification() async throws {
 /// Unpack records from a resolved handle
 func exampleUnpackRecords() async throws {
     let fabric = Fabric()
-    let resolved = try await fabric.resolve("alice@bitcoin")!
+    let zone = try await fabric.resolve("alice@bitcoin")!
 
     // <doc:unpack-records>
-    let records = try resolved.zone.records.unpack()
+    let records = try zone.records.unpack()
 
     for record in records {
         switch record {
@@ -88,9 +88,9 @@ func exampleResolveAll() async throws {
     let fabric = Fabric()
 
     // <doc:resolve-all>
-    let batch = try await fabric.resolveAll(["alice@bitcoin", "bob@bitcoin"])
+    let zones = try await fabric.resolveAll(["alice@bitcoin", "bob@bitcoin"])
 
-    for zone in batch.zones {
+    for zone in zones {
         print("\(zone.handle): \(zone.sovereignty)")
     }
     // </doc:resolve-all>
@@ -137,12 +137,12 @@ func exampleResolveById() async throws {
     let fabric = Fabric()
 
     // <doc:resolve-by-id>
-    guard let resolved = try await fabric.resolveById("num1qx8dtlzq...") else {
+    guard let zone = try await fabric.resolveById("num1qx8dtlzq...") else {
         print("handle not found")
         return
     }
 
-    print("Handle found: \(resolved.zone.handle)")
+    print("Handle found: \(zone.handle)")
     // </doc:resolve-by-id>
 }
 
@@ -151,9 +151,9 @@ func exampleSearchAddr() async throws {
     let fabric = Fabric()
 
     // <doc:search-addr>
-    let batch = try await fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
+    let zones = try await fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
 
-    for zone in batch.zones {
+    for zone in zones {
         print("\(zone.handle): \(zone.sovereignty)")
     }
     // </doc:search-addr>

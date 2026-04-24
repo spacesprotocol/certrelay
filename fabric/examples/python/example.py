@@ -11,7 +11,7 @@ from fabric import CertificateChain, MessageBuilder, ChainProof, SIG_PRIMARY_ZON
 async def example_resolve_intro():
     # <doc:resolve-intro>
     fabric = Fabric()
-    resolved = await fabric.resolve("alice@bitcoin")
+    zone = await fabric.resolve("alice@bitcoin")
     # </doc:resolve-intro>
 
 
@@ -19,12 +19,12 @@ async def example_resolve():
     """Resolve a single handle"""
     # <doc:resolve>
     fabric = Fabric()
-    resolved = await fabric.resolve("alice@bitcoin")
-    if resolved is None:
+    zone = await fabric.resolve("alice@bitcoin")
+    if zone is None:
         print("handle not found")
         return
 
-    print(f"Handle found: {resolved.zone.handle}")
+    print(f"Handle found: {zone.handle}")
     # </doc:resolve>
 
 
@@ -35,9 +35,9 @@ async def example_trust_and_verification():
     # <doc:verification>
     # Before pinning a trust id: resolve uses observed (peer) state
     # badge() returns Unverified
-    resolved = await fabric.resolve("alice@bitcoin")
+    zone = await fabric.resolve("alice@bitcoin")
 
-    fabric.badge(resolved)  # Unverified
+    fabric.badge(zone)  # Unverified
 
     # Pin trust from a QR scan
     qr = "veritas://scan?id=14ef902621df01bdeee0b23fedf67458563a20df600af8979a4748dcd9d1b9f9"
@@ -46,8 +46,8 @@ async def example_trust_and_verification():
     await fabric.trust_from_qr(qr)
 
     # Does not require re-resolving, badge now checks
-    # whether resolved was against a trusted root
-    fabric.badge(resolved)  # Orange if handle is sovereign (final certificate)
+    # whether zone was against a trusted root
+    fabric.badge(zone)  # Orange if handle is sovereign (final certificate)
 
     # Or from a semi-trusted source (e.g. an explorer you trust with qr scanned over HTTPS)
     # .badge() will not show Orange for roots in this trust pool,
@@ -69,10 +69,10 @@ async def example_trust_and_verification():
 async def example_unpack_records():
     """Unpack records from a resolved handle"""
     fabric = Fabric()
-    resolved = await fabric.resolve("alice@bitcoin")
+    zone = await fabric.resolve("alice@bitcoin")
 
     # <doc:unpack-records>
-    records = resolved.zone.records.unpack()
+    records = zone.records.unpack()
 
     for record in records:
         if record.type == "txt":
@@ -87,9 +87,9 @@ async def example_resolve_all():
     fabric = Fabric()
 
     # <doc:resolve-all>
-    batch = await fabric.resolve_all(["alice@bitcoin", "bob@bitcoin"])
+    zones = await fabric.resolve_all(["alice@bitcoin", "bob@bitcoin"])
 
-    for zone in batch.zones:
+    for zone in zones:
         print(f"{zone.handle}: {zone.sovereignty}")
     # </doc:resolve-all>
 
@@ -133,12 +133,12 @@ async def example_resolve_by_id():
     fabric = Fabric()
 
     # <doc:resolve-by-id>
-    resolved = await fabric.resolve_by_id("num1qx8dtlzq...")
-    if resolved is None:
+    zone = await fabric.resolve_by_id("num1qx8dtlzq...")
+    if zone is None:
         print("handle not found")
         return
 
-    print(f"Handle found: {resolved.zone.handle}")
+    print(f"Handle found: {zone.handle}")
     # </doc:resolve-by-id>
 
 
@@ -147,9 +147,9 @@ async def example_search_addr():
     fabric = Fabric()
 
     # <doc:search-addr>
-    batch = await fabric.search_addr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
+    zones = await fabric.search_addr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
 
-    for zone in batch.zones:
+    for zone in zones:
         print(f"{zone.handle}: {zone.sovereignty}")
     # </doc:search-addr>
 

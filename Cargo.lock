@@ -2035,9 +2035,9 @@ dependencies = [
 
 [[package]]
 name = "libveritas"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76d82373509126c4da380014710f2c2605d4fa78797877d8f1eed8632093f636"
+checksum = "a9b646e5e793b4a806c5f17646e7b6a1eb9f1ab89b5539f3249e99f02c175e95"
 dependencies = [
  "base64 0.22.1",
  "borsh",
@@ -2054,9 +2054,9 @@ dependencies = [
 
 [[package]]
 name = "libveritas_testutil"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff1f4c3819010a26f5f254c01a6488c572bc6dbb5a273ebe87eff52e3c8c72c"
+checksum = "f4a6fca4cc7c1d13baf31337c776a2bc0b18bdcce80a9c365c8cbc3f8102e740"
 dependencies = [
  "bitcoin",
  "borsh",

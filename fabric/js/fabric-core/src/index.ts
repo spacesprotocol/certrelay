@@ -1,10 +1,8 @@
-export { Fabric, FabricError, parseScanUri, batchGet } from "./fabric.js";
+export { Fabric, FabricError, parseScanUri } from "./fabric.js";
 export type {
   FabricOptions,
   PeerInfo,
   VerificationBadge,
-  Resolved,
-  ResolvedBatch,
   ScanParams,
   SignSchnorrFn,
 } from "./fabric.js";

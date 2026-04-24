@@ -40,13 +40,6 @@ data class PeerInfo(
 
 enum class VerificationBadge { Orange, Unverified, None }
 
-data class Resolved(val zone: Zone, val roots: List<String>)
-data class ResolvedBatch(val zones: List<Zone>, val roots: List<String>) {
-    fun get(handle: String): Resolved? {
-        val zone = zones.find { it.handle == handle } ?: return null
-        return Resolved(zone, roots)
-    }
-}
 
 private val json = Json { ignoreUnknownKeys = true }
 
@@ -130,16 +123,16 @@ class Fabric(
 
     fun clearTrusted() { trusted = null }
 
-    fun badge(resolved: Resolved): VerificationBadge =
-        badgeFor(resolved.zone.sovereignty, resolved.roots)
+    fun badge(zone: Zone): VerificationBadge =
+        badgeFor(zone.sovereignty, zone.anchorHash)
 
-    fun badgeFor(sovereignty: String, roots: List<String>): VerificationBadge {
+    fun badgeFor(sovereignty: String, anchorHash: String): VerificationBadge {
         val hasAny = synchronized(lock) { trusted != null || observed != null || semiTrusted != null }
         if (!hasAny) return VerificationBadge.Unverified
 
-        val isTrusted = areRootsTrusted(roots)
-        val isObserved = isTrusted || areRootsObserved(roots)
-        val isSemiTrusted = isTrusted || areRootsSemiTrusted(roots)
+        val isTrusted = isRootTrusted(anchorHash)
+        val isObserved = isTrusted || isRootObserved(anchorHash)
+        val isSemiTrusted = isTrusted || isRootSemiTrusted(anchorHash)
         return when {
             isTrusted && sovereignty == "sovereign" -> VerificationBadge.Orange
             isObserved && !isTrusted && !isSemiTrusted -> VerificationBadge.Unverified
@@ -207,13 +200,12 @@ class Fabric(
 
     // -- Resolution --
 
-    fun resolve(handle: String): Resolved? {
-        val batch = resolveAll(listOf(handle))
-        val zone = batch.zones.find { it.handle == handle } ?: return null
-        return Resolved(zone, batch.roots)
+    fun resolve(handle: String): Zone? {
+        val zones = resolveAll(listOf(handle))
+        return zones.find { it.handle == handle }
     }
 
-    fun resolveById(numId: String): Resolved? {
+    fun resolveById(numId: String): Zone? {
         bootstrap()
         val urls = pool.shuffledUrls(4)
         var lastErr: Exception = FabricError("no_peers", "reverse resolution failed")
@@ -238,20 +230,20 @@ class Fabric(
 
             val entry = entries.find { it.id == numId } ?: continue
 
-            val resolved = resolve(entry.name) ?: continue
+            val zone = resolve(entry.name) ?: continue
 
-            if (resolved.zone.numId != numId) {
-                lastErr = FabricError("verify", "reverse mismatch: expected $numId, got ${resolved.zone.numId}")
+            if (zone.numId != numId) {
+                lastErr = FabricError("verify", "reverse mismatch: expected $numId, got ${zone.numId}")
                 continue
             }
 
-            return resolved
+            return zone
         }
 
         return null
     }
 
-    fun searchAddr(name: String, addr: String): ResolvedBatch {
+    fun searchAddr(name: String, addr: String): List<Zone> {
         bootstrap()
         val urls = pool.shuffledUrls(4)
         var lastErr: Exception = FabricError("no_peers", "address search failed")
@@ -274,7 +266,7 @@ class Fabric(
             if (result.handles.isEmpty()) continue
 
             val revNames = result.handles.map { it.rev }
-            val batch = try {
+            val zones = try {
                 resolveAll(revNames)
             } catch (e: Exception) {
                 lastErr = e
@@ -282,7 +274,7 @@ class Fabric(
             }
 
             // Filter to zones that actually contain the matching addr record
-            val matching = batch.zones.filter { z ->
+            val matching = zones.filter { z ->
                 z.records?.let { bytes ->
                     try {
                         val rs = RecordSet(bytes)
@@ -293,16 +285,15 @@ class Fabric(
                 } ?: false
             }
             if (matching.isEmpty()) continue
-            return ResolvedBatch(matching, batch.roots)
+            return matching
         }
 
         throw lastErr
     }
 
-    fun resolveAll(handles: List<String>): ResolvedBatch {
+    fun resolveAll(handles: List<String>): List<Zone> {
         val lookup = Lookup(handles)
         val allZones = mutableListOf<Zone>()
-        val roots = mutableListOf<String>()
 
         var prevBatch = emptyList<String>()
         var batch = lookup.start()
@@ -313,10 +304,9 @@ class Fabric(
             prevBatch = batch
             batch = lookup.advance(zones)
             allZones.addAll(zones)
-            roots.add(verified.rootId().toHexString())
         }
 
-        return ResolvedBatch(lookup.expandZones(allZones), roots)
+        return lookup.expandZones(allZones)
     }
 
     fun export(handle: String): ByteArray {
@@ -681,28 +671,22 @@ class Fabric(
 
     // -- Private trust helpers --
 
-    private fun areRootsTrusted(roots: List<String>): Boolean {
+    private fun isRootTrusted(anchorHash: String): Boolean {
         val ts = trusted ?: return false
-        return roots.all { root ->
-            val rootBytes = root.hexToByteArray()
-            ts.roots.any { it.contentEquals(rootBytes) }
-        }
+        val rootBytes = anchorHash.hexToByteArray()
+        return ts.roots.any { it.contentEquals(rootBytes) }
     }
 
-    private fun areRootsObserved(roots: List<String>): Boolean {
+    private fun isRootObserved(anchorHash: String): Boolean {
         val ts = observed ?: return false
-        return roots.all { root ->
-            val rootBytes = root.hexToByteArray()
-            ts.roots.any { it.contentEquals(rootBytes) }
-        }
+        val rootBytes = anchorHash.hexToByteArray()
+        return ts.roots.any { it.contentEquals(rootBytes) }
     }
 
-    private fun areRootsSemiTrusted(roots: List<String>): Boolean {
+    private fun isRootSemiTrusted(anchorHash: String): Boolean {
         val ts = semiTrusted ?: return false
-        return roots.all { root ->
-            val rootBytes = root.hexToByteArray()
-            ts.roots.any { it.contentEquals(rootBytes) }
-        }
+        val rootBytes = anchorHash.hexToByteArray()
+        return ts.roots.any { it.contentEquals(rootBytes) }
     }
 }
 

@@ -1,8 +1,6 @@
 from .client import (
     Fabric,
     FabricError,
-    Resolved,
-    ResolvedBatch,
     BADGE_ORANGE,
     BADGE_UNVERIFIED,
     BADGE_NONE,
@@ -17,8 +15,6 @@ import libveritas
 __all__ = [
     "Fabric",
     "FabricError",
-    "Resolved",
-    "ResolvedBatch",
     "BADGE_ORANGE",
     "BADGE_UNVERIFIED",
     "BADGE_NONE",

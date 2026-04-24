@@ -12,23 +12,6 @@ import type {
 
 export type VerificationBadge = "orange" | "unverified" | "none";
 
-export interface Resolved {
-  zone: FabricZone;
-  roots: string[];  // hex-encoded
-}
-
-export interface ResolvedBatch {
-  zones: FabricZone[];
-  roots: string[];  // hex-encoded
-}
-
-/** Look up a specific handle from a batch. */
-export function batchGet(batch: ResolvedBatch, handle: string): Resolved | undefined {
-  const zone = batch.zones.find(z => z.handle === handle);
-  if (!zone) return undefined;
-  return { zone, roots: batch.roots };
-}
-
 export interface FabricOptions {
   provider: VeritasProvider;
   seeds?: string[];
@@ -275,22 +258,24 @@ export class Fabric {
     this._trusted = null;
   }
 
-  /** Compute a verification badge for a resolved handle. */
-  badge(resolved: Resolved): VerificationBadge {
-    const json = resolved.zone.toJson();
+  /** Compute a verification badge for a zone. */
+  badge(zone: FabricZone): VerificationBadge {
+    const json = zone.toJson();
     const sovereignty: string = json?.sovereignty ?? "delegated";
-    return this.badgeFor(sovereignty, resolved.roots);
+    const anchorHash: string | undefined = json?.anchor_hash;
+    if (!anchorHash) return "unverified";
+    return this.badgeFor(sovereignty, anchorHash);
   }
 
-  /** Compute a verification badge given sovereignty type and roots. */
-  badgeFor(sovereignty: string, roots: string[]): VerificationBadge {
+  /** Compute a verification badge given sovereignty type and an anchor hash. */
+  badgeFor(sovereignty: string, anchorHash: string): VerificationBadge {
     if (!this._trusted && !this._observed && !this._semiTrusted) {
       return "unverified";
     }
 
-    const isTrusted = this.areRootsTrusted(roots);
-    const isObserved = isTrusted || this.areRootsObserved(roots);
-    const isSemiTrusted = isTrusted || this.areRootsSemiTrusted(roots);
+    const isTrusted = this.isRootTrusted(anchorHash);
+    const isObserved = isTrusted || this.isRootObserved(anchorHash);
+    const isSemiTrusted = isTrusted || this.isRootSemiTrusted(anchorHash);
 
     if (isTrusted && sovereignty === "sovereign") {
       return "orange";
@@ -301,22 +286,19 @@ export class Fabric {
     return "none";
   }
 
-  private areRootsTrusted(roots: string[]): boolean {
+  private isRootTrusted(anchorHash: string): boolean {
     if (!this._trusted) return false;
-    const trustedSet = new Set(this._trusted.roots.map(r => toHex(r)));
-    return roots.every(root => trustedSet.has(root));
+    return this._trusted.roots.some(r => toHex(r) === anchorHash);
   }
 
-  private areRootsObserved(roots: string[]): boolean {
+  private isRootObserved(anchorHash: string): boolean {
     if (!this._observed) return false;
-    const observedSet = new Set(this._observed.roots.map(r => toHex(r)));
-    return roots.every(root => observedSet.has(root));
+    return this._observed.roots.some(r => toHex(r) === anchorHash);
   }
 
-  private areRootsSemiTrusted(roots: string[]): boolean {
+  private isRootSemiTrusted(anchorHash: string): boolean {
     if (!this._semiTrusted) return false;
-    const semiSet = new Set(this._semiTrusted.roots.map(r => toHex(r)));
-    return roots.every(root => semiSet.has(root));
+    return this._semiTrusted.roots.some(r => toHex(r) === anchorHash);
   }
 
   // ── Publish ──
@@ -490,17 +472,13 @@ export class Fabric {
   // ── Resolution ──
 
   /** Resolve a single handle. Returns null if not found. Supports nested names like `hello.alice@bitcoin`. */
-  async resolve(handle: string): Promise<Resolved | null> {
-    const batch = await this.resolveAll([handle]);
-    const zone = batch.zones.find((z) => z.handle === handle);
-    if (!zone) {
-      return null;
-    }
-    return { zone, roots: batch.roots };
+  async resolve(handle: string): Promise<FabricZone | null> {
+    const zones = await this.resolveAll([handle]);
+    return zones.find((z) => z.handle === handle) ?? null;
   }
 
   /** Resolve a numeric ID to a verified handle. */
-  async resolveById(numId: string): Promise<Resolved> {
+  async resolveById(numId: string): Promise<FabricZone | null> {
     await this.bootstrap();
     const relays = this.pool.shuffledUrls(4);
     let lastErr: Error = new FabricError("reverse resolution failed", "no_peers");
@@ -513,22 +491,22 @@ export class Fabric {
         const entry = records.find(r => r.id === numId);
         if (!entry) continue;
 
-        let resolved: Resolved | null;
+        let zone: FabricZone | null;
         try {
-          resolved = await this.resolve(entry.name);
+          zone = await this.resolve(entry.name);
         } catch (e) {
           lastErr = e instanceof Error ? e : new FabricError(String(e), "decode");
           continue;
         }
-        if (!resolved) continue;
+        if (!zone) continue;
 
-        const json = resolved.zone.toJson();
+        const json = zone.toJson();
         if (json?.num_id !== numId) {
           lastErr = new FabricError(`reverse mismatch: expected ${numId}`, "verify");
           continue;
         }
 
-        return resolved;
+        return zone;
       } catch (e) {
         lastErr = e instanceof FabricError ? e : new FabricError(`reverse failed: ${e}`, "http");
       }
@@ -538,7 +516,7 @@ export class Fabric {
   }
 
   /** Search for handles by address record. Verifies results via forward resolution. */
-  async searchAddr(name: string, addr: string): Promise<ResolvedBatch> {
+  async searchAddr(name: string, addr: string): Promise<FabricZone[]> {
     await this.bootstrap();
     const relays = this.pool.shuffledUrls(4);
     let lastErr: Error = new FabricError("address search failed", "no_peers");
@@ -553,16 +531,16 @@ export class Fabric {
         if (!result.handles || result.handles.length === 0) continue;
 
         const revNames = result.handles.map(h => h.rev);
-        let batch: ResolvedBatch;
+        let zones: FabricZone[];
         try {
-          batch = await this.resolveAll(revNames);
+          zones = await this.resolveAll(revNames);
         } catch (e) {
           lastErr = e instanceof Error ? e : new FabricError(String(e), "decode");
           continue;
         }
 
         // Filter to zones that actually have the matching addr record
-        const matching = batch.zones.filter(zone => {
+        const matching = zones.filter(zone => {
           const json = zone.toJson();
           const records = json?.records;
           if (!Array.isArray(records)) return false;
@@ -577,7 +555,7 @@ export class Fabric {
           continue;
         }
 
-        return { zones: matching, roots: batch.roots };
+        return matching;
       } catch (e) {
         lastErr = e instanceof FabricError ? e : new FabricError(`addr search failed: ${e}`, "http");
       }
@@ -587,10 +565,9 @@ export class Fabric {
   }
 
   /** Resolve multiple handles, including nested names like `hello.alice@bitcoin`. */
-  async resolveAll(handles: string[]): Promise<ResolvedBatch> {
+  async resolveAll(handles: string[]): Promise<FabricZone[]> {
     const lookup = this.provider.createLookup(handles);
     const allZones: FabricZone[] = [];
-    const roots: string[] = [];
 
     let prevBatch: string[] = [];
     let batch = lookup.start();
@@ -601,13 +578,9 @@ export class Fabric {
       prevBatch = batch;
       batch = lookup.advance(zones);
       allZones.push(...zones);
-      roots.push(toHex(verified.rootId()));
     }
 
-    return {
-      zones: lookup.expandZones(allZones),
-      roots,
-    };
+    return lookup.expandZones(allZones);
   }
 
   /** Export a certificate chain for a handle. */

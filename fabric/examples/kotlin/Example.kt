@@ -20,7 +20,7 @@ import org.spacesprotocol.fabric.SIG_PRIMARY_ZONE
 suspend fun exampleResolveIntro() {
     // <doc:resolve-intro>
     val fabric = Fabric()
-    val resolved = fabric.resolve("alice@bitcoin")
+    val zone = fabric.resolve("alice@bitcoin")
     // </doc:resolve-intro>
 }
 
@@ -28,13 +28,13 @@ suspend fun exampleResolveIntro() {
 suspend fun exampleResolve() {
     // <doc:resolve>
     val fabric = Fabric()
-    val resolved = fabric.resolve("alice@bitcoin")
-    if (resolved == null) {
+    val zone = fabric.resolve("alice@bitcoin")
+    if (zone == null) {
         println("handle not found")
         return
     }
 
-    println("Handle found: ${resolved.zone.handle}")
+    println("Handle found: ${zone.handle}")
     // </doc:resolve>
 }
 
@@ -45,10 +45,10 @@ suspend fun exampleTrustAndVerification() {
     // <doc:verification>
     // Before pinning a trust id: resolve uses observed (peer) state
     // badge() returns Unverified
-    val resolved = fabric.resolve("alice@bitcoin")
+    val zone = fabric.resolve("alice@bitcoin")
         ?: throw IllegalStateException("handle exists")
 
-    fabric.badge(resolved) // Unverified
+    fabric.badge(zone) // Unverified
 
     // Pin trust from a QR scan
     val qr = "veritas://scan?id=14ef902621df01bdeee0b23fedf67458563a20df600af8979a4748dcd9d1b9f9"
@@ -57,8 +57,8 @@ suspend fun exampleTrustAndVerification() {
     fabric.trustFromQr(qr)
 
     // Does not require re-resolving, badge now checks
-    // whether resolved was against a trusted root
-    fabric.badge(resolved) // Orange if handle is sovereign (final certificate)
+    // whether zone was against a trusted root
+    fabric.badge(zone) // Orange if handle is sovereign (final certificate)
 
     // Or from a semi-trusted source (e.g. an explorer you trust with qr scanned over HTTPS)
     // .badge() will not show Orange for roots in this trust pool,
@@ -80,11 +80,11 @@ suspend fun exampleTrustAndVerification() {
 /// Unpack records from a resolved handle
 suspend fun exampleUnpackRecords() {
     val fabric = Fabric()
-    val resolved = fabric.resolve("alice@bitcoin")
+    val zone = fabric.resolve("alice@bitcoin")
         ?: throw IllegalStateException("handle exists")
 
     // <doc:unpack-records>
-    val records = resolved.zone.records.unpack()
+    val records = zone.records.unpack()
 
     for (record in records) {
         when (record) {
@@ -101,9 +101,9 @@ suspend fun exampleResolveAll() {
     val fabric = Fabric()
 
     // <doc:resolve-all>
-    val batch = fabric.resolveAll(listOf("alice@bitcoin", "bob@bitcoin"))
+    val zones = fabric.resolveAll(listOf("alice@bitcoin", "bob@bitcoin"))
 
-    for (zone in batch.zones) {
+    for (zone in zones) {
         println("${zone.handle}: ${zone.sovereignty}")
     }
     // </doc:resolve-all>
@@ -147,13 +147,13 @@ suspend fun exampleResolveById() {
     val fabric = Fabric()
 
     // <doc:resolve-by-id>
-    val resolved = fabric.resolveById("num1qx8dtlzq...")
-    if (resolved == null) {
+    val zone = fabric.resolveById("num1qx8dtlzq...")
+    if (zone == null) {
         println("handle not found")
         return
     }
 
-    println("Handle found: ${resolved.zone.handle}")
+    println("Handle found: ${zone.handle}")
     // </doc:resolve-by-id>
 }
 
@@ -162,9 +162,9 @@ suspend fun exampleSearchAddr() {
     val fabric = Fabric()
 
     // <doc:search-addr>
-    val batch = fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
+    val zones = fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
 
-    for (zone in batch.zones) {
+    for (zone in zones) {
         println("${zone.handle}: ${zone.sovereignty}")
     }
     // </doc:search-addr>

@@ -53,26 +53,6 @@ public enum VerificationBadge {
     case none
 }
 
-// MARK: - Resolved types
-
-/// A resolved handle with its zone and verification roots.
-public struct Resolved {
-    public let zone: Zone
-    public let roots: [String]  // hex-encoded root IDs
-}
-
-/// A batch of resolved handles with shared verification roots.
-public struct ResolvedBatch {
-    public let zones: [Zone]
-    public let roots: [String]  // hex-encoded root IDs
-
-    /// Look up a specific handle from the batch.
-    public func get(_ handle: String) -> Resolved? {
-        guard let zone = zones.first(where: { $0.handle == handle }) else { return nil }
-        return Resolved(zone: zone, roots: roots)
-    }
-}
-
 // MARK: - Trust kind
 
 private enum TrustKind {
@@ -262,21 +242,21 @@ public final class Fabric: @unchecked Sendable {
         lock.lock(); trusted = nil; lock.unlock()
     }
 
-    /// Badge for a Resolved handle.
-    public func badge(_ resolved: Resolved) -> VerificationBadge {
-        badgeFor(sovereignty: resolved.zone.sovereignty, roots: resolved.roots)
+    /// Badge for a Zone.
+    public func badge(_ zone: Zone) -> VerificationBadge {
+        badgeFor(sovereignty: zone.sovereignty, anchorHash: zone.anchorHash)
     }
 
-    /// Badge given sovereignty and roots.
-    public func badgeFor(sovereignty: String, roots: [String]) -> VerificationBadge {
+    /// Badge given sovereignty and an anchor hash.
+    public func badgeFor(sovereignty: String, anchorHash: String) -> VerificationBadge {
         lock.lock()
         let hasAny = trusted != nil || observed != nil || semiTrusted != nil
         lock.unlock()
         if !hasAny { return .unverified }
 
-        let isTrusted = areRootsTrusted(roots)
-        let isObserved = isTrusted || areRootsObserved(roots)
-        let isSemiTrusted = isTrusted || areRootsSemiTrusted(roots)
+        let isTrusted = isRootTrusted(anchorHash)
+        let isObserved = isTrusted || isRootObserved(anchorHash)
+        let isSemiTrusted = isTrusted || isRootSemiTrusted(anchorHash)
         if isTrusted && sovereignty == "sovereign" { return .orange }
         if isObserved && !isTrusted && !isSemiTrusted { return .unverified }
         return .none
@@ -334,16 +314,13 @@ public final class Fabric: @unchecked Sendable {
     // MARK: - Resolution
 
     /// Resolve a single handle. Returns nil if not found. Supports dotted names like `hello.alice@bitcoin`.
-    public func resolve(_ handle: String) async throws -> Resolved? {
-        let batch = try await resolveAll([handle])
-        guard let zone = batch.zones.first(where: { $0.handle == handle }) else {
-            return nil
-        }
-        return Resolved(zone: zone, roots: batch.roots)
+    public func resolve(_ handle: String) async throws -> Zone? {
+        let zones = try await resolveAll([handle])
+        return zones.first(where: { $0.handle == handle })
     }
 
     /// Resolve a numeric ID to a verified handle. Returns nil if not found.
-    public func resolveById(_ numId: String) async throws -> Resolved? {
+    public func resolveById(_ numId: String) async throws -> Zone? {
         try await bootstrap()
         let relays = pool.shuffledUrls(4)
 
@@ -358,17 +335,17 @@ public final class Fabric: @unchecked Sendable {
 
             guard let entry = entries.first(where: { $0.id == numId }) else { continue }
 
-            guard let resolved = try await resolve(entry.name) else { continue }
+            guard let zone = try await resolve(entry.name) else { continue }
 
-            guard resolved.zone.numId == numId else { continue }
-            return resolved
+            guard zone.numId == numId else { continue }
+            return zone
         }
 
         return nil
     }
 
     /// Search for handles by address record, verify via forward resolution.
-    public func searchAddr(_ name: String, addr: String) async throws -> ResolvedBatch {
+    public func searchAddr(_ name: String, addr: String) async throws -> [Zone] {
         try await bootstrap()
         let relays = pool.shuffledUrls(4)
 
@@ -384,13 +361,13 @@ public final class Fabric: @unchecked Sendable {
             if result.handles.isEmpty { continue }
 
             let revNames = result.handles.map(\.rev)
-            let batch: ResolvedBatch
+            let zones: [Zone]
             do {
-                batch = try await resolveAll(revNames)
+                zones = try await resolveAll(revNames)
             } catch { continue }
 
             // Filter to zones that actually contain the matching addr record
-            let matching = batch.zones.filter { z in
+            let matching = zones.filter { z in
                 do {
                     let rs = RecordSet(data: z.records)
                     let records = try rs.unpack()
@@ -403,7 +380,7 @@ public final class Fabric: @unchecked Sendable {
                 } catch { return false }
             }
             if matching.isEmpty { continue }
-            return ResolvedBatch(zones: matching, roots: batch.roots)
+            return matching
         }
 
         throw FabricError.noPeers
@@ -413,10 +390,9 @@ public final class Fabric: @unchecked Sendable {
     ///
     /// Returns expanded zones for all requested handles.
     /// Uses the Lookup type from libveritas for dotted-name resolution.
-    public func resolveAll(_ handles: [String]) async throws -> ResolvedBatch {
+    public func resolveAll(_ handles: [String]) async throws -> [Zone] {
         let lookup = try Lookup(names: handles)
         var allZones = [Zone]()
-        var roots = [String]()
 
         var prevBatch = [String]()
         var batch = lookup.start()
@@ -427,11 +403,9 @@ public final class Fabric: @unchecked Sendable {
             prevBatch = batch
             batch = try lookup.advance(zones: zones)
             allZones.append(contentsOf: zones)
-            roots.append(Data(verified.rootId()).hexString)
         }
 
-        let expanded = try lookup.expandZones(zones: allZones)
-        return ResolvedBatch(zones: expanded, roots: roots)
+        return try lookup.expandZones(zones: allZones)
     }
 
     /// Export a certificate chain for a handle in `.spacecert` format.
@@ -727,31 +701,25 @@ public final class Fabric: @unchecked Sendable {
 
     // MARK: - Trust helpers (private)
 
-    private func areRootsTrusted(_ roots: [String]) -> Bool {
+    private func isRootTrusted(_ anchorHash: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = trusted else { return false }
-        return roots.allSatisfy { root in
-            guard let rootBytes = Data(hexString: root) else { return false }
-            return ts.roots.contains { Data($0) == rootBytes }
-        }
+        guard let rootBytes = Data(hexString: anchorHash) else { return false }
+        return ts.roots.contains { Data($0) == rootBytes }
     }
 
-    private func areRootsObserved(_ roots: [String]) -> Bool {
+    private func isRootObserved(_ anchorHash: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = observed else { return false }
-        return roots.allSatisfy { root in
-            guard let rootBytes = Data(hexString: root) else { return false }
-            return ts.roots.contains { Data($0) == rootBytes }
-        }
+        guard let rootBytes = Data(hexString: anchorHash) else { return false }
+        return ts.roots.contains { Data($0) == rootBytes }
     }
 
-    private func areRootsSemiTrusted(_ roots: [String]) -> Bool {
+    private func isRootSemiTrusted(_ anchorHash: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = semiTrusted else { return false }
-        return roots.allSatisfy { root in
-            guard let rootBytes = Data(hexString: root) else { return false }
-            return ts.roots.contains { Data($0) == rootBytes }
-        }
+        guard let rootBytes = Data(hexString: anchorHash) else { return false }
+        return ts.roots.contains { Data($0) == rootBytes }
     }
 
     // MARK: - Internal fetch helpers

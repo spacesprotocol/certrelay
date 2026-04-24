@@ -35,24 +35,6 @@ class FabricError(Exception):
                          else f"{code} ({status}): {message}")
 
 
-@dataclass
-class Resolved:
-    zone: lv.Zone
-    roots: list[str]  # hex-encoded root IDs
-
-
-@dataclass
-class ResolvedBatch:
-    zones: list[lv.Zone]
-    roots: list[str]  # hex-encoded root IDs
-
-    def get(self, handle: str) -> Resolved | None:
-        """Look up a specific handle from the batch."""
-        zone = next((z for z in self.zones if z.handle == handle), None)
-        if zone is None:
-            return None
-        return Resolved(zone=zone, roots=self.roots)
-
 
 @dataclass
 class _EpochHint:
@@ -211,31 +193,28 @@ class Fabric:
         """Clear the pinned trusted state."""
         self._trusted = None
 
-    def badge(self, resolved: Resolved) -> str:
-        """Return the verification badge for a Resolved handle."""
-        return self.badge_for(resolved.zone.sovereignty, resolved.roots)
+    def badge(self, zone: lv.Zone) -> str:
+        """Return the verification badge for a Zone."""
+        return self.badge_for(zone.sovereignty, zone.anchor_hash)
 
-    def badge_for(self, sovereignty: str, roots: list[str]) -> str:
-        """Return the verification badge given sovereignty and root IDs."""
+    def badge_for(self, sovereignty: str, anchor_hash: str) -> str:
+        """Return the verification badge given sovereignty and an anchor hash."""
         if self._trusted is None and self._observed is None and self._semi_trusted is None:
             return BADGE_UNVERIFIED
-        is_trusted = self._are_roots_trusted(roots)
-        is_observed = is_trusted or self._are_roots_observed(roots)
-        is_semi_trusted = is_trusted or self._are_roots_semi_trusted(roots)
+        is_trusted = self._is_root_trusted(anchor_hash)
+        is_observed = is_trusted or self._is_root_observed(anchor_hash)
+        is_semi_trusted = is_trusted or self._is_root_semi_trusted(anchor_hash)
         if is_trusted and sovereignty == "sovereign":
             return BADGE_ORANGE
         if is_observed and not is_trusted and not is_semi_trusted:
             return BADGE_UNVERIFIED
         return BADGE_NONE
 
-    def resolve(self, handle: str) -> Resolved | None:
-        batch = self.resolve_all([handle])
-        zone = next((z for z in batch.zones if z.handle == handle), None)
-        if zone is None:
-            return None
-        return Resolved(zone=zone, roots=batch.roots)
+    def resolve(self, handle: str) -> lv.Zone | None:
+        zones = self.resolve_all([handle])
+        return next((z for z in zones if z.handle == handle), None)
 
-    def resolve_by_id(self, num_id: str) -> Resolved | None:
+    def resolve_by_id(self, num_id: str) -> lv.Zone | None:
         """Resolve a numeric ID to a verified handle. Returns None if not found."""
         self.bootstrap()
         urls = self._pool.shuffled_urls(4)
@@ -258,20 +237,20 @@ class Fabric:
             if entry is None:
                 continue
 
-            resolved = self.resolve(entry["name"])
-            if resolved is None:
+            zone = self.resolve(entry["name"])
+            if zone is None:
                 continue
 
-            if getattr(resolved.zone, "num_id", None) != num_id:
+            if getattr(zone, "num_id", None) != num_id:
                 last_err = FabricError("verify", f"num_id mismatch: expected {num_id}")
                 continue
 
             self._pool.mark_alive(u)
-            return resolved
+            return zone
 
         return None
 
-    def search_addr(self, name: str, addr: str) -> ResolvedBatch:
+    def search_addr(self, name: str, addr: str) -> list[lv.Zone]:
         """Search for handles by address record, verify via forward resolution."""
         self.bootstrap()
         urls = self._pool.shuffled_urls(4)
@@ -296,14 +275,14 @@ class Fabric:
 
             rev_names = [h["rev"] for h in handles]
             try:
-                batch = self.resolve_all(rev_names)
+                zones = self.resolve_all(rev_names)
             except Exception as e:
                 last_err = e
                 continue
 
             # Filter to zones that actually contain the matching addr record
             matching = []
-            for z in batch.zones:
+            for z in zones:
                 if z.records is not None:
                     try:
                         rs = lv.RecordSet(z.records)
@@ -319,14 +298,13 @@ class Fabric:
                 continue
 
             self._pool.mark_alive(u)
-            return ResolvedBatch(zones=matching, roots=batch.roots)
+            return matching
 
         raise last_err
 
-    def resolve_all(self, handles: list[str]) -> ResolvedBatch:
+    def resolve_all(self, handles: list[str]) -> list[lv.Zone]:
         lookup = lv.Lookup(handles)
         all_zones: list[lv.Zone] = []
-        roots: list[str] = []
 
         prev_batch: list[str] = []
         batch = lookup.start()
@@ -338,10 +316,8 @@ class Fabric:
             prev_batch = batch
             batch = lookup.advance(zones)
             all_zones.extend(zones)
-            roots.append(bytes(verified.root_id()).hex())
 
-        expanded = lookup.expand_zones(all_zones)
-        return ResolvedBatch(zones=expanded, roots=roots)
+        return lookup.expand_zones(all_zones)
 
     def export(self, handle: str) -> bytes:
         """Export a certificate chain for a handle in .spacecert format."""
@@ -447,32 +423,26 @@ class Fabric:
 
     # -- Internal --
 
-    def _are_roots_trusted(self, roots: list[str]) -> bool:
+    def _is_root_trusted(self, anchor_hash: str) -> bool:
         ts = self._trusted
         if ts is None:
             return False
-        return all(
-            any(bytes(r) == bytes.fromhex(root) for r in ts.roots)
-            for root in roots
-        )
+        root_bytes = bytes.fromhex(anchor_hash)
+        return any(bytes(r) == root_bytes for r in ts.roots)
 
-    def _are_roots_observed(self, roots: list[str]) -> bool:
+    def _is_root_observed(self, anchor_hash: str) -> bool:
         ts = self._observed
         if ts is None:
             return False
-        return all(
-            any(bytes(r) == bytes.fromhex(root) for r in ts.roots)
-            for root in roots
-        )
+        root_bytes = bytes.fromhex(anchor_hash)
+        return any(bytes(r) == root_bytes for r in ts.roots)
 
-    def _are_roots_semi_trusted(self, roots: list[str]) -> bool:
+    def _is_root_semi_trusted(self, anchor_hash: str) -> bool:
         ts = self._semi_trusted
         if ts is None:
             return False
-        return all(
-            any(bytes(r) == bytes.fromhex(root) for r in ts.roots)
-            for root in roots
-        )
+        root_bytes = bytes.fromhex(anchor_hash)
+        return any(bytes(r) == root_bytes for r in ts.roots)
 
     def _bootstrap_peers(self):
         urls: set[str] = set()
