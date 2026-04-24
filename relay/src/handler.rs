@@ -304,13 +304,15 @@ impl Handler {
                 let space = cert.subject.space()?.to_string();
 
                 // Rate limit per space (100 handle updates/min) and per handle (1 per 5 min)
-                if self.space_rate.check_key(&space).is_err() {
-                    tracing::warn!("{}: space rate limited, skipping", space);
-                    return None;
-                }
-                if self.handle_rate.check_key(&handle_str).is_err() {
-                    tracing::warn!("{}: handle rate limited, skipping", handle_str);
-                    return None;
+                if !self.dev_mode {
+                    if self.space_rate.check_key(&space).is_err() {
+                        tracing::warn!("{}: space rate limited, skipping", space);
+                        return None;
+                    }
+                    if self.handle_rate.check_key(&handle_str).is_err() {
+                        tracing::warn!("{}: handle rate limited, skipping", handle_str);
+                        return None;
+                    }
                 }
                 let epoch_height = epoch_map.get(&space).copied().unwrap_or(0);
                 let offchain_seq = zone.records.seq().unwrap_or(0);

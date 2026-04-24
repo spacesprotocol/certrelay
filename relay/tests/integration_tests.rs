@@ -455,10 +455,10 @@ async fn test_anchors_endpoint() {
         .await
         .expect("anchors response should be valid JSON AnchorSet");
     assert!(!anchor_set.entries.is_empty(), "should have anchor entries");
-    assert!(anchor_set.root_matches(), "anchor root hash should match");
 
     // GET /anchors?root=<hex> should return the same set
-    let root_hex = hex::encode(anchor_set.trust_id);
+    let trust_set = libveritas::compute_trust_set(&anchor_set.entries);
+    let root_hex = hex::encode(trust_set.id);
     let resp = client
         .get(format!("{}/anchors?root={}", url, root_hex))
         .send()
@@ -470,8 +470,9 @@ async fn test_anchors_endpoint() {
         .json()
         .await
         .expect("anchors response with root param should be valid JSON");
+    let fetched_trust = libveritas::compute_trust_set(&fetched.entries);
     assert_eq!(
-        fetched.trust_id, anchor_set.trust_id,
+        fetched_trust.id, trust_set.id,
         "fetched anchor root should match"
     );
 
