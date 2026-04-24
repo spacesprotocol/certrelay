@@ -155,20 +155,16 @@ async fn test_resolve_all() {
     // Resolve multiple handles
     let fabric = Fabric::with_seeds(&[url.as_str()]);
 
-    let batch = fabric
+    let zones = fabric
         .resolve_all(&["alice@sovereign", "bob@sovereign"])
         .await
         .expect("should resolve multiple handles");
 
     assert!(
-        batch
-            .zones
+        zones
             .iter()
             .any(|z| z.handle.to_string() == "alice@sovereign")
-            || batch
-                .zones
-                .iter()
-                .any(|z| z.handle.to_string() == "@sovereign"),
+            || zones.iter().any(|z| z.handle.to_string() == "@sovereign"),
         "should contain alice or root zone"
     );
 }
@@ -183,9 +179,12 @@ async fn test_resolve_nonexistent() {
 
     let fabric = Fabric::with_seeds(&[url.as_str()]);
 
-    // Resolve a handle that was never broadcast
-    let result = fabric.resolve("nobody@sovereign").await;
-    assert!(result.is_err(), "resolving nonexistent handle should fail");
+    // Resolve a handle that was never broadcast — returns None
+    let result = fabric.resolve("nobody@sovereign").await.unwrap();
+    assert!(
+        result.is_none(),
+        "resolving nonexistent handle should return None"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -212,23 +211,19 @@ async fn test_resolve_all_partial() {
     // Resolve one existing and one nonexistent handle
     let fabric = Fabric::with_seeds(&[url.as_str()]);
     fabric.set_prefer_latest(false);
-    let batch = fabric
+    let zones = fabric
         .resolve_all(&["alice@sovereign", "nobody@sovereign"])
         .await
         .expect("resolve_all should succeed with partial results");
 
     // Should return the existing handle, not the missing one
     assert!(
-        !batch
-            .zones
+        !zones
             .iter()
             .any(|z| z.handle.to_string() == "nobody@sovereign"),
         "nonexistent handle should not be in results"
     );
-    assert!(
-        batch.zones.len() >= 1,
-        "should have at least the existing handle"
-    );
+    assert!(zones.len() >= 1, "should have at least the existing handle");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -257,9 +252,9 @@ async fn test_broadcast_then_resolve() {
         .await
         .expect("should resolve alice after broadcast");
 
-    let batch = fabric
+    let zones = fabric
         .resolve_all(&["alice@sovereign", "bob@sovereign"])
         .await
         .expect("should resolve all after broadcast");
-    assert!(batch.zones.len() >= 2, "should have at least 2 zones");
+    assert!(zones.len() >= 2, "should have at least 2 zones");
 }

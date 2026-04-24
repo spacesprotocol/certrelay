@@ -65,8 +65,6 @@ export type {
   EpochResult,
   HandleHint,
   VerificationBadge,
-  Resolved,
-  ResolvedBatch,
 } from "@spacesprotocol/fabric-core";
 
 // Re-export libveritas types so consumers don't need a separate import

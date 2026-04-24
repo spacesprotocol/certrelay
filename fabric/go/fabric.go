@@ -98,17 +98,6 @@ type ReverseRecord struct {
 	Name string `json:"name"`
 }
 
-// Resolved wraps a single zone with its verification roots.
-type Resolved struct {
-	Zone  libveritas.Zone
-	Roots []string // hex-encoded root IDs
-}
-
-// ResolvedBatch wraps multiple zones with shared verification roots.
-type ResolvedBatch struct {
-	Zones []libveritas.Zone
-	Roots []string // hex-encoded root IDs
-}
 
 type anchorPool struct {
 	trusted     string // raw entries JSON
@@ -247,16 +236,23 @@ func (f *Fabric) ClearTrusted() {
 	f.mu.Unlock()
 }
 
-// Badge returns the verification badge for a Resolved handle.
-func (f *Fabric) Badge(resolved Resolved) VerificationBadge {
-	return f.BadgeFor(resolved.Zone.Sovereignty, resolved.Roots)
+// Badge returns the verification badge for a Zone.
+func (f *Fabric) Badge(zone libveritas.Zone) VerificationBadge {
+	return f.BadgeFor(zone.Sovereignty, zone.AnchorHash)
 }
 
-// BadgeFor returns the verification badge given sovereignty and root IDs.
-func (f *Fabric) BadgeFor(sovereignty string, roots []string) VerificationBadge {
-	isTrusted := f.areRootsTrusted(roots)
-	isObserved := isTrusted || f.areRootsObserved(roots)
-	isSemiTrusted := isTrusted || f.areRootsSemiTrusted(roots)
+// BadgeFor returns the verification badge given sovereignty and an anchor hash.
+func (f *Fabric) BadgeFor(sovereignty string, anchorHash string) VerificationBadge {
+	f.mu.Lock()
+	hasAny := f.trusted != nil || f.observed != nil || f.semiTrusted != nil
+	f.mu.Unlock()
+	if !hasAny {
+		return BadgeUnverified
+	}
+
+	isTrusted := f.isRootTrusted(anchorHash)
+	isObserved := isTrusted || f.isRootObserved(anchorHash)
+	isSemiTrusted := isTrusted || f.isRootSemiTrusted(anchorHash)
 
 	if isTrusted && sovereignty == "sovereign" {
 		return BadgeOrange
@@ -267,58 +263,43 @@ func (f *Fabric) BadgeFor(sovereignty string, roots []string) VerificationBadge 
 	return BadgeNone
 }
 
-func (f *Fabric) areRootsTrusted(roots []string) bool {
+func (f *Fabric) isRootTrusted(anchorHash string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.trusted == nil {
 		return false
 	}
-	for _, root := range roots {
-		rootBytes, err := hex.DecodeString(root)
-		if err != nil {
-			return false
-		}
-		if !containsRoot(f.trusted.Roots, rootBytes) {
-			return false
-		}
+	rootBytes, err := hex.DecodeString(anchorHash)
+	if err != nil {
+		return false
 	}
-	return true
+	return containsRoot(f.trusted.Roots, rootBytes)
 }
 
-func (f *Fabric) areRootsObserved(roots []string) bool {
+func (f *Fabric) isRootObserved(anchorHash string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.observed == nil {
 		return false
 	}
-	for _, root := range roots {
-		rootBytes, err := hex.DecodeString(root)
-		if err != nil {
-			return false
-		}
-		if !containsRoot(f.observed.Roots, rootBytes) {
-			return false
-		}
+	rootBytes, err := hex.DecodeString(anchorHash)
+	if err != nil {
+		return false
 	}
-	return true
+	return containsRoot(f.observed.Roots, rootBytes)
 }
 
-func (f *Fabric) areRootsSemiTrusted(roots []string) bool {
+func (f *Fabric) isRootSemiTrusted(anchorHash string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.semiTrusted == nil {
 		return false
 	}
-	for _, root := range roots {
-		rootBytes, err := hex.DecodeString(root)
-		if err != nil {
-			return false
-		}
-		if !containsRoot(f.semiTrusted.Roots, rootBytes) {
-			return false
-		}
+	rootBytes, err := hex.DecodeString(anchorHash)
+	if err != nil {
+		return false
 	}
-	return true
+	return containsRoot(f.semiTrusted.Roots, rootBytes)
 }
 
 func containsRoot(roots [][]byte, target []byte) bool {
@@ -429,14 +410,14 @@ func (f *Fabric) updateAnchors(trustID string, kind trustKind) error {
 }
 
 // Resolve a single handle. Returns nil if not found. Supports dotted names like "hello.alice@bitcoin".
-func (f *Fabric) Resolve(handle string) (*Resolved, error) {
-	batch, err := f.ResolveAll([]string{handle})
+func (f *Fabric) Resolve(handle string) (*libveritas.Zone, error) {
+	zones, err := f.ResolveAll([]string{handle})
 	if err != nil {
 		return nil, err
 	}
-	for _, z := range batch.Zones {
+	for _, z := range zones {
 		if z.Handle == handle {
-			return &Resolved{Zone: z, Roots: batch.Roots}, nil
+			return &z, nil
 		}
 	}
 	return nil, nil
@@ -445,7 +426,7 @@ func (f *Fabric) Resolve(handle string) (*Resolved, error) {
 // ResolveById resolves a numeric ID to a handle by querying relays
 // for the reverse mapping, then verifying via forward resolution.
 // Returns nil if not found.
-func (f *Fabric) ResolveById(numId string) (*Resolved, error) {
+func (f *Fabric) ResolveById(numId string) (*libveritas.Zone, error) {
 	if err := f.Bootstrap(); err != nil {
 		return nil, err
 	}
@@ -482,29 +463,29 @@ func (f *Fabric) ResolveById(numId string) (*Resolved, error) {
 			continue
 		}
 
-		resolved, err := f.Resolve(name)
+		zone, err := f.Resolve(name)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if resolved == nil {
+		if zone == nil {
 			continue
 		}
 
-		if resolved.Zone.NumId == nil || *resolved.Zone.NumId != numId {
+		if zone.NumId == nil || *zone.NumId != numId {
 			lastErr = &FabricError{Code: "verify", Message: fmt.Sprintf("reverse mismatch: expected %s", numId)}
 			continue
 		}
 
-		return resolved, nil
+		return zone, nil
 	}
 	return nil, lastErr
 }
 
 // SearchAddr searches for handles by address record, verifies via forward resolution.
-func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
+func (f *Fabric) SearchAddr(name, addr string) ([]libveritas.Zone, error) {
 	if err := f.Bootstrap(); err != nil {
-		return ResolvedBatch{}, err
+		return nil, err
 	}
 	urls := f.pool.ShuffledURLs(4)
 	var lastErr error = &FabricError{Code: "no_peers", Message: "address search failed"}
@@ -540,7 +521,7 @@ func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
 			revNames[i] = h.Rev
 		}
 
-		batch, err := f.ResolveAll(revNames)
+		zones, err := f.ResolveAll(revNames)
 		if err != nil {
 			lastErr = err
 			continue
@@ -548,7 +529,7 @@ func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
 
 		// Filter to zones that actually contain the matching addr record
 		var matching []libveritas.Zone
-		for _, z := range batch.Zones {
+		for _, z := range zones {
 			if z.Records != nil {
 				rs := libveritas.NewRecordSet(*z.Records)
 				records, err := rs.Unpack()
@@ -568,22 +549,20 @@ func (f *Fabric) SearchAddr(name, addr string) (ResolvedBatch, error) {
 		if len(matching) == 0 {
 			continue
 		}
-		batch.Zones = matching
-		return batch, nil
+		return matching, nil
 	}
-	return ResolvedBatch{}, lastErr
+	return nil, lastErr
 }
 
 // ResolveAll resolves multiple handles including dotted names.
-func (f *Fabric) ResolveAll(handles []string) (ResolvedBatch, error) {
+func (f *Fabric) ResolveAll(handles []string) ([]libveritas.Zone, error) {
 	lookup, err := libveritas.NewLookup(handles)
 	if err != nil {
-		return ResolvedBatch{}, fmt.Errorf("creating lookup: %w", err)
+		return nil, fmt.Errorf("creating lookup: %w", err)
 	}
 	defer lookup.Destroy()
 
 	var allZones []libveritas.Zone
-	var roots []string
 	var prevBatch []string
 	batch := lookup.Start()
 	for len(batch) > 0 {
@@ -592,26 +571,25 @@ func (f *Fabric) ResolveAll(handles []string) (ResolvedBatch, error) {
 		}
 		verified, err := f.resolveFlat(batch, true)
 		if err != nil {
-			return ResolvedBatch{}, err
+			return nil, err
 		}
 		zones := verified.Zones()
 		prevBatch = batch
 		var next []string
 		next, err = lookup.Advance(zones)
 		if err != nil {
-			return ResolvedBatch{}, fmt.Errorf("lookup advance: %w", err)
+			return nil, fmt.Errorf("lookup advance: %w", err)
 		}
 		allZones = append(allZones, zones...)
-		roots = append(roots, hex.EncodeToString(verified.RootId()))
 		batch = next
 	}
 
 	expanded, err := lookup.ExpandZones(allZones)
 	if err != nil {
-		return ResolvedBatch{}, fmt.Errorf("expand zones: %w", err)
+		return nil, fmt.Errorf("expand zones: %w", err)
 	}
 
-	return ResolvedBatch{Zones: expanded, Roots: roots}, nil
+	return expanded, nil
 }
 
 // Export resolves a handle and returns the raw certificate chain bytes.

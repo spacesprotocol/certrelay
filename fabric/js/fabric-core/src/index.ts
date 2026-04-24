@@ -3,8 +3,6 @@ export type {
   FabricOptions,
   PeerInfo,
   VerificationBadge,
-  Resolved,
-  ResolvedBatch,
   ScanParams,
   SignSchnorrFn,
 } from "./fabric.js";

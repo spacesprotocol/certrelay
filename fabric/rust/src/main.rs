@@ -64,9 +64,9 @@ async fn main() {
 
     let handle_refs: Vec<&str> = handles.iter().map(|s| s.as_ref()).collect();
     match fabric.resolve_all(&handle_refs).await {
-        Ok(batch) => {
+        Ok(zones) => {
             for handle in &handles {
-                match batch.zones.iter().find(|z| z.handle.to_string() == *handle) {
+                match zones.iter().find(|z| z.handle.to_string() == *handle) {
                     Some(zone) => println!("{}", serde_json::to_string(zone).unwrap()),
                     None => eprintln!("{handle}: not found"),
                 }

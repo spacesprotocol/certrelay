@@ -8,7 +8,7 @@ import { signSchnorr } from "@spacesprotocol/fabric-web/signing";
 async function exampleResolveIntro() {
     // <doc:resolve-intro>
     const fabric = new Fabric();
-    const resolved = await fabric.resolve("alice@bitcoin");
+    const zone = await fabric.resolve("alice@bitcoin");
     // </doc:resolve-intro>
 }
 
@@ -16,13 +16,13 @@ async function exampleResolveIntro() {
 async function exampleResolve() {
     // <doc:resolve>
     const fabric = new Fabric();
-    const resolved = await fabric.resolve("alice@bitcoin");
-    if (!resolved) {
+    const zone = await fabric.resolve("alice@bitcoin");
+    if (!zone) {
         console.log("handle not found");
         return;
     }
 
-    console.log(`Handle found: ${resolved.zone.handle}`);
+    console.log(`Handle found: ${zone.handle}`);
     // </doc:resolve>
 }
 
@@ -33,9 +33,9 @@ async function exampleTrustAndVerification() {
     // <doc:verification>
     // Before pinning a trust id: resolve uses observed (peer) state
     // badge() returns "unverified"
-    const resolved = await fabric.resolve("alice@bitcoin");
+    const zone = await fabric.resolve("alice@bitcoin");
 
-    fabric.badge(resolved); // "unverified"
+    fabric.badge(zone); // "unverified"
 
     // Pin trust from a QR scan
     const qr = "veritas://scan?id=14ef902621df01bdeee0b23fedf67458563a20df600af8979a4748dcd9d1b9f9";
@@ -44,8 +44,8 @@ async function exampleTrustAndVerification() {
     await fabric.trustFromQr(qr);
 
     // Does not require re-resolving, badge now checks
-    // whether resolved was against a trusted root
-    fabric.badge(resolved); // "orange" if handle is sovereign (final certificate)
+    // whether the zone's anchor_hash is in the trusted set
+    fabric.badge(zone); // "orange" if handle is sovereign (final certificate)
 
     // Or from a semi-trusted source (e.g. an explorer you trust with qr scanned over HTTPS)
     // .badge() will not show "orange" for roots in this trust pool,
@@ -65,10 +65,10 @@ async function exampleTrustAndVerification() {
 /// Unpack records from a resolved handle
 async function exampleUnpackRecords() {
     const fabric = new Fabric();
-    const resolved = await fabric.resolve("alice@bitcoin");
+    const zone = await fabric.resolve("alice@bitcoin");
 
     // <doc:unpack-records>
-    const json = resolved.zone.toJson();
+    const json = zone.toJson();
 
     for (const record of json.records) {
         if (record.type === "txt") {
@@ -85,9 +85,9 @@ async function exampleResolveAll() {
     const fabric = new Fabric();
 
     // <doc:resolve-all>
-    const batch = await fabric.resolveAll(["alice@bitcoin", "bob@bitcoin"]);
+    const zones = await fabric.resolveAll(["alice@bitcoin", "bob@bitcoin"]);
 
-    for (const zone of batch.zones) {
+    for (const zone of zones) {
         console.log(`${zone.handle}`);
     }
     // </doc:resolve-all>
@@ -134,13 +134,13 @@ async function exampleResolveById() {
     const fabric = new Fabric();
 
     // <doc:resolve-by-id>
-    const resolved = await fabric.resolveById("num1qx8dtlzq...");
-    if (!resolved) {
+    const zone = await fabric.resolveById("num1qx8dtlzq...");
+    if (!zone) {
         console.log("handle not found");
         return;
     }
 
-    console.log(`Handle found: ${resolved.zone.handle}`);
+    console.log(`Handle found: ${zone.handle}`);
     // </doc:resolve-by-id>
 }
 
@@ -149,9 +149,9 @@ async function exampleSearchAddr() {
     const fabric = new Fabric();
 
     // <doc:search-addr>
-    const batch = await fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6");
+    const zones = await fabric.searchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6");
 
-    for (const zone of batch.zones) {
+    for (const zone of zones) {
         console.log(`${zone.handle}`);
     }
     // </doc:search-addr>

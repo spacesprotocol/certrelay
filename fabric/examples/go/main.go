@@ -16,12 +16,12 @@ import (
 func exampleResolveIntro() error {
 	// <doc:resolve-intro>
 	f := fabric.New()
-	resolved, err := f.Resolve("alice@bitcoin")
+	zone, err := f.Resolve("alice@bitcoin")
 	// </doc:resolve-intro>
 	if err != nil {
 		return err
 	}
-	_ = resolved
+	_ = zone
 	return nil
 }
 
@@ -29,16 +29,16 @@ func exampleResolveIntro() error {
 func exampleResolve() error {
 	// <doc:resolve>
 	f := fabric.New()
-	resolved, err := f.Resolve("alice@bitcoin")
+	zone, err := f.Resolve("alice@bitcoin")
 	if err != nil {
 		return err
 	}
-	if resolved == nil {
+	if zone == nil {
 		fmt.Println("handle not found")
 		return nil
 	}
 
-	fmt.Printf("Handle found: %s\n", resolved.Zone.Handle)
+	fmt.Printf("Handle found: %s\n", zone.Handle)
 	// </doc:resolve>
 
 	return nil
@@ -51,12 +51,12 @@ func exampleTrustAndVerification() error {
 	// <doc:verification>
 	// Before pinning a trust id: resolve uses observed (peer) state
 	// badge() returns Unverified
-	resolved, err := f.Resolve("alice@bitcoin")
+	zone, err := f.Resolve("alice@bitcoin")
 	if err != nil {
 		return err
 	}
 
-	f.Badge(resolved) // Unverified
+	f.Badge(*zone) // Unverified
 
 	// Pin trust from a QR scan
 	qr := "veritas://scan?id=14ef902621df01bdeee0b23fedf67458563a20df600af8979a4748dcd9d1b9f9"
@@ -67,8 +67,8 @@ func exampleTrustAndVerification() error {
 	}
 
 	// Does not require re-resolving, badge now checks
-	// whether resolved was against a trusted root
-	f.Badge(resolved) // Orange if handle is sovereign (final certificate)
+	// whether zone was against a trusted root
+	f.Badge(*zone) // Orange if handle is sovereign (final certificate)
 
 	// Or from a semi-trusted source (e.g. an explorer you trust with qr scanned over HTTPS)
 	// .Badge() will not show Orange for roots in this trust pool,
@@ -94,13 +94,13 @@ func exampleTrustAndVerification() error {
 /// Unpack records from a resolved handle
 func exampleUnpackRecords() error {
 	f := fabric.New()
-	resolved, err := f.Resolve("alice@bitcoin")
+	zone, err := f.Resolve("alice@bitcoin")
 	if err != nil {
 		return err
 	}
 
 	// <doc:unpack-records>
-	records, err := resolved.Zone.Records.Unpack()
+	records, err := zone.Records.Unpack()
 	if err != nil {
 		return err
 	}
@@ -123,12 +123,12 @@ func exampleResolveAll() error {
 	f := fabric.New()
 
 	// <doc:resolve-all>
-	batch, err := f.ResolveAll([]string{"alice@bitcoin", "bob@bitcoin"})
+	zones, err := f.ResolveAll([]string{"alice@bitcoin", "bob@bitcoin"})
 	if err != nil {
 		return err
 	}
 
-	for _, zone := range batch.Zones {
+	for _, zone := range zones {
 		fmt.Printf("%s: %s\n", zone.Handle, zone.Sovereignty)
 	}
 	// </doc:resolve-all>
@@ -195,16 +195,16 @@ func exampleResolveById() error {
 	f := fabric.New()
 
 	// <doc:resolve-by-id>
-	resolved, err := f.ResolveById("num1qx8dtlzq...")
+	zone, err := f.ResolveById("num1qx8dtlzq...")
 	if err != nil {
 		return err
 	}
-	if resolved == nil {
+	if zone == nil {
 		fmt.Println("handle not found")
 		return nil
 	}
 
-	fmt.Printf("Handle found: %s\n", resolved.Zone.Handle)
+	fmt.Printf("Handle found: %s\n", zone.Handle)
 	// </doc:resolve-by-id>
 
 	return nil
@@ -215,12 +215,12 @@ func exampleSearchAddr() error {
 	f := fabric.New()
 
 	// <doc:search-addr>
-	batch, err := f.SearchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
+	zones, err := f.SearchAddr("nostr", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
 	if err != nil {
 		return err
 	}
 
-	for _, zone := range batch.Zones {
+	for _, zone := range zones {
 		fmt.Printf("%s: %s\n", zone.Handle, zone.Sovereignty)
 	}
 	// </doc:search-addr>

@@ -104,6 +104,27 @@ impl AnchorPool {
     }
 }
 
+/// Serializable snapshot of Fabric state for persistence.
+#[derive(Serialize, Deserialize)]
+pub struct FabricState {
+    pub version: u32,
+    pub relays: Vec<String>,
+    pub anchors: AnchorPoolState,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub zone_cache: HashMap<String, Zone>,
+}
+
+/// Anchor entries per trust source.
+#[derive(Serialize, Deserialize, Default)]
+pub struct AnchorPoolState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted: Vec<spaces_nums::RootAnchor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub semi_trusted: Vec<spaces_nums::RootAnchor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed: Vec<spaces_nums::RootAnchor>,
+}
+
 pub struct RelayPool {
     inner: Mutex<Vec<RelayEntry>>,
 }
@@ -143,20 +164,6 @@ impl fmt::Display for Badge {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ResolvedBatch {
-    pub zones: Vec<Zone>,
-    pub roots: Vec<TrustId>,
-    pub relays: Vec<String>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Resolved {
-    pub zone: Zone,
-    pub roots: Vec<TrustId>,
-    pub relays: Vec<String>,
-}
-
 impl Default for Fabric {
     fn default() -> Self {
         Self::new()
@@ -189,6 +196,68 @@ impl Fabric {
     pub fn with_dev_mode(mut self) -> Self {
         self.dev_mode = true;
         self
+    }
+
+    /// Export the current state for persistence.
+    pub fn save_state(&self) -> FabricState {
+        let pool = self.anchor_pool.lock().unwrap();
+        let zone_cache: HashMap<String, Zone> = self
+            .root_cache
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        FabricState {
+            version: 1,
+            relays: self.pool.urls(),
+            anchors: AnchorPoolState {
+                trusted: pool.trusted.clone(),
+                semi_trusted: pool.semi_trusted.clone(),
+                observed: pool.observed.clone(),
+            },
+            zone_cache,
+        }
+    }
+
+    /// Create a Fabric instance from previously saved state.
+    /// Rebuilds trust sets and Veritas from the persisted anchors.
+    pub fn from_state(state: FabricState) -> Result<Self> {
+        let fabric = Self::new();
+
+        if !state.relays.is_empty() {
+            fabric.pool.refresh(state.relays);
+        }
+
+        {
+            let mut pool = fabric.anchor_pool.lock().unwrap();
+            pool.trusted = state.anchors.trusted;
+            pool.semi_trusted = state.anchors.semi_trusted;
+            pool.observed = state.anchors.observed;
+
+            if !pool.trusted.is_empty() {
+                *fabric.trusted.lock().unwrap() = Some(compute_trust_set(&pool.trusted));
+            }
+            if !pool.semi_trusted.is_empty() {
+                *fabric.semi_trusted.lock().unwrap() = Some(compute_trust_set(&pool.semi_trusted));
+            }
+            if !pool.observed.is_empty() {
+                *fabric.observed.lock().unwrap() = Some(compute_trust_set(&pool.observed));
+            }
+
+            let merged = pool.merged();
+            if !merged.is_empty() {
+                let v = Veritas::new().with_anchors(merged).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}"))
+                })?;
+                *fabric.veritas.lock().unwrap() = v;
+            }
+        }
+
+        for (key, zone) in state.zone_cache {
+            fabric.root_cache.insert(key, zone);
+        }
+
+        Ok(fabric)
     }
 
     fn are_roots_trusted(&self, roots: &[TrustId]) -> bool {
@@ -230,16 +299,20 @@ impl Fabric {
         true
     }
 
-    pub fn badge(&self, resolved: &Resolved) -> Badge {
-        self.badge_for(resolved.zone.sovereignty, resolved.roots.as_slice())
-    }
+    pub fn badge(&self, zone: &Zone) -> Badge {
+        let has_any_pool = self.trusted.lock().unwrap().is_some()
+            || self.observed.lock().unwrap().is_some()
+            || self.semi_trusted.lock().unwrap().is_some();
+        if !has_any_pool {
+            return Badge::Unverified;
+        }
 
-    pub fn badge_for(&self, sov: SovereigntyState, roots: &[TrustId]) -> Badge {
-        let is_trusted = self.are_roots_trusted(roots);
-        let is_observed = is_trusted || self.are_roots_observed(roots);
-        let is_semi_trusted = is_trusted || self.are_roots_semi_trusted(roots);
+        let root = TrustId::from(zone.anchor_hash);
+        let is_trusted = self.are_roots_trusted(&[root]);
+        let is_observed = is_trusted || self.are_roots_observed(&[root]);
+        let is_semi_trusted = is_trusted || self.are_roots_semi_trusted(&[root]);
 
-        if is_trusted && matches!(sov, SovereigntyState::Sovereign) {
+        if is_trusted && matches!(zone.sovereignty, SovereigntyState::Sovereign) {
             Badge::Orange
         } else if is_observed && !is_trusted && !is_semi_trusted {
             Badge::Unverified
@@ -423,32 +496,24 @@ impl Fabric {
     }
 
     /// Resolve a single handle and return its verified Zone.
+    /// Returns None if the handle doesn't exist.
     /// Supports dotted names like `hello.alice@bitcoin`.
-    pub async fn resolve(&self, handle: &str) -> Result<Option<Resolved>> {
-        let rb = self.resolve_all(&[handle]).await?;
-        let zone = rb
-            .zones
-            .into_iter()
-            .find(|z| z.handle.to_string() == handle);
-        Ok(zone.map(|z| Resolved {
-            zone: z,
-            roots: rb.roots,
-            relays: rb.relays,
-        }))
+    pub async fn resolve(&self, handle: &str) -> Result<Option<Zone>> {
+        let zones = self.resolve_all(&[handle]).await?;
+        Ok(zones.into_iter().find(|z| z.handle.to_string() == handle))
     }
 
     /// Reverse-resolve by a num id to retrieve its human-readable name.
     ///
     /// Queries relays for the reverse mapping, resolves the forward name,
     /// and verifies the zone's num_id matches.
-    pub async fn resolve_by_id(&self, num_id: &str) -> Result<Option<Resolved>> {
+    pub async fn resolve_by_id(&self, num_id: &str) -> Result<Option<Zone>> {
         self.bootstrap().await?;
         let relays = self.pool.shuffled_urls_n(4);
         let mut last_err: Option<Error> = None;
         let mut any_responded = false;
 
         for url in &relays {
-            // 1. Fetch reverse mapping
             let reverse_url = format!("{url}/reverse?ids={num_id}");
             let records: Vec<crate::ReverseRecord> = match self.http.get(&reverse_url).send().await
             {
@@ -465,9 +530,8 @@ impl Fabric {
                 continue;
             };
 
-            // 2. Resolve forward
-            let resolved = match self.resolve(&entry.name).await {
-                Ok(Some(r)) => r,
+            let zone = match self.resolve(&entry.name).await {
+                Ok(Some(z)) => z,
                 Ok(None) => continue,
                 Err(e) => {
                     last_err = Some(e);
@@ -475,8 +539,7 @@ impl Fabric {
                 }
             };
 
-            // 3. Verify num_id matches
-            let zone_num_id = resolved.zone.num_id.as_ref().map(|id| id.to_string());
+            let zone_num_id = zone.num_id.as_ref().map(|id| id.to_string());
             if zone_num_id.as_deref() != Some(num_id) {
                 last_err = Some(Error::Decode(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -485,10 +548,9 @@ impl Fabric {
                 continue;
             }
 
-            return Ok(Some(resolved));
+            return Ok(Some(zone));
         }
 
-        // If relays responded but had no mapping, assume not found
         if any_responded && last_err.is_none() {
             return Ok(None);
         }
@@ -500,13 +562,12 @@ impl Fabric {
     ///
     /// Queries relays for handles claiming the address, resolves them forward,
     /// and filters to zones that actually contain the matching addr record.
-    pub async fn search_addr(&self, name: &str, addr: &str) -> Result<ResolvedBatch> {
+    pub async fn search_addr(&self, name: &str, addr: &str) -> Result<Vec<Zone>> {
         self.bootstrap().await?;
         let relays = self.pool.shuffled_urls_n(4);
         let mut last_err = Error::NoPeers;
 
         for url in &relays {
-            // 1. Fetch addr index
             let addr_url = format!("{url}/addrs?name={name}&addr={addr}");
             let addr_match: crate::AddrMatch = match self.http.get(&addr_url).send().await {
                 Ok(resp) if resp.status().is_success() => match resp.json().await {
@@ -520,20 +581,17 @@ impl Fabric {
                 continue;
             }
 
-            // 2. Resolve forward using the rev names
             let rev_names: Vec<String> = addr_match.handles.iter().map(|e| e.rev.clone()).collect();
             let refs: Vec<&str> = rev_names.iter().map(|s| s.as_str()).collect();
-            let batch = match self.resolve_all(&refs).await {
-                Ok(b) => b,
+            let zones = match self.resolve_all(&refs).await {
+                Ok(z) => z,
                 Err(e) => {
                     last_err = e;
                     continue;
                 }
             };
 
-            // 3. Filter to zones that actually have the matching addr record
-            let matching_zones: Vec<Zone> = batch
-                .zones
+            let matching: Vec<Zone> = zones
                 .into_iter()
                 .filter(|zone| {
                     zone.records
@@ -548,7 +606,7 @@ impl Fabric {
                 })
                 .collect();
 
-            if matching_zones.is_empty() {
+            if matching.is_empty() {
                 last_err = Error::Decode(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     "no verified matches",
@@ -556,18 +614,14 @@ impl Fabric {
                 continue;
             }
 
-            return Ok(ResolvedBatch {
-                zones: matching_zones,
-                roots: batch.roots,
-                relays: batch.relays,
-            });
+            return Ok(matching);
         }
 
         Err(last_err)
     }
 
     /// Resolve multiple handles, including nested names like `hello.alice@bitcoin`.
-    pub async fn resolve_all(&self, handles: &[&str]) -> Result<ResolvedBatch> {
+    pub async fn resolve_all(&self, handles: &[&str]) -> Result<Vec<Zone>> {
         let snames: Vec<SName> = handles
             .iter()
             .filter_map(|h| SName::try_from(*h).ok())
@@ -575,35 +629,23 @@ impl Fabric {
 
         let lookup = libveritas::names::Lookup::new(snames);
         let mut all_zones: Vec<Zone> = Vec::new();
-        let mut roots: Vec<TrustId> = Vec::new();
-        let mut relays: Vec<String> = Vec::new();
 
         let mut prev_batch: Vec<SName> = Vec::new();
         let mut batch: Vec<SName> = lookup.start();
         while !batch.is_empty() {
-            // If advance returned the same batch, no progress — break
             if batch == prev_batch {
                 break;
             }
             let strs: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
             let refs: Vec<&str> = strs.iter().map(|s| s.as_str()).collect();
-            let (verified, relay_url) = self.resolve_flat(&refs, true).await?;
+            let (verified, _relay_url) = self.resolve_flat(&refs, true).await?;
             prev_batch = batch;
             batch = lookup.advance(&verified.zones);
             all_zones.extend(verified.zones);
-            roots.push(TrustId::from(verified.root_id));
-            if !relays.contains(&relay_url) {
-                relays.push(relay_url);
-            }
         }
 
         lookup.expand_zones(&mut all_zones);
-
-        Ok(ResolvedBatch {
-            zones: all_zones,
-            roots,
-            relays,
-        })
+        Ok(all_zones)
     }
 
     /// Export a certificate chain for a handle in `.spacecert` format.
