@@ -17,7 +17,6 @@ export interface FabricZone {
 export interface VerifiedMessageHandle {
   zones(): FabricZone[];
   certificates(): Uint8Array[];
-  rootId(): Uint8Array;
 }
 
 export interface QueryContextHandle {
@@ -142,7 +141,6 @@ export function wasmProvider(lib: WasmLibveritas): VeritasProvider {
               const certs: any[] = vm.certificates();
               return certs.map((c: any) => new Uint8Array(c));
             },
-            rootId: () => vm.rootId(),
           };
         },
       };
@@ -277,7 +275,6 @@ export function reactNativeProvider(
               ),
             certificates: () =>
               vm.certificates().map((c: any) => new Uint8Array(c)),
-            rootId: () => new Uint8Array(vm.rootId()),
           };
         },
       };
