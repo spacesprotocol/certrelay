@@ -117,7 +117,36 @@ func (p *anchorPool) merged() (string, error) {
 		}
 		allEntries = append(allEntries, entries...)
 	}
-	data, err := json.Marshal(allEntries)
+
+	type entryWithHeight struct {
+		raw    json.RawMessage
+		height uint64
+	}
+	parsed := make([]entryWithHeight, 0, len(allEntries))
+	seen := make(map[uint64]struct{}, len(allEntries))
+	for _, e := range allEntries {
+		var meta struct {
+			Block struct {
+				Height uint64 `json:"height"`
+			} `json:"block"`
+		}
+		if err := json.Unmarshal(e, &meta); err != nil {
+			continue
+		}
+		if _, ok := seen[meta.Block.Height]; ok {
+			continue
+		}
+		seen[meta.Block.Height] = struct{}{}
+		parsed = append(parsed, entryWithHeight{raw: e, height: meta.Block.Height})
+	}
+	sort.Slice(parsed, func(i, j int) bool {
+		return parsed[i].height > parsed[j].height
+	})
+	out := make([]json.RawMessage, len(parsed))
+	for i, e := range parsed {
+		out[i] = e.raw
+	}
+	data, err := json.Marshal(out)
 	return string(data), err
 }
 
@@ -242,7 +271,7 @@ func (f *Fabric) Badge(zone libveritas.Zone) VerificationBadge {
 }
 
 // BadgeFor returns the verification badge given sovereignty and an anchor hash.
-func (f *Fabric) BadgeFor(sovereignty string, anchorHash string) VerificationBadge {
+func (f *Fabric) BadgeFor(sovereignty string, anchorHash []byte) VerificationBadge {
 	f.mu.Lock()
 	hasAny := f.trusted != nil || f.observed != nil || f.semiTrusted != nil
 	f.mu.Unlock()
@@ -263,43 +292,31 @@ func (f *Fabric) BadgeFor(sovereignty string, anchorHash string) VerificationBad
 	return BadgeNone
 }
 
-func (f *Fabric) isRootTrusted(anchorHash string) bool {
+func (f *Fabric) isRootTrusted(anchorHash []byte) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.trusted == nil {
 		return false
 	}
-	rootBytes, err := hex.DecodeString(anchorHash)
-	if err != nil {
-		return false
-	}
-	return containsRoot(f.trusted.Roots, rootBytes)
+	return containsRoot(f.trusted.Roots, anchorHash)
 }
 
-func (f *Fabric) isRootObserved(anchorHash string) bool {
+func (f *Fabric) isRootObserved(anchorHash []byte) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.observed == nil {
 		return false
 	}
-	rootBytes, err := hex.DecodeString(anchorHash)
-	if err != nil {
-		return false
-	}
-	return containsRoot(f.observed.Roots, rootBytes)
+	return containsRoot(f.observed.Roots, anchorHash)
 }
 
-func (f *Fabric) isRootSemiTrusted(anchorHash string) bool {
+func (f *Fabric) isRootSemiTrusted(anchorHash []byte) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.semiTrusted == nil {
 		return false
 	}
-	rootBytes, err := hex.DecodeString(anchorHash)
-	if err != nil {
-		return false
-	}
-	return containsRoot(f.semiTrusted.Roots, rootBytes)
+	return containsRoot(f.semiTrusted.Roots, anchorHash)
 }
 
 func containsRoot(roots [][]byte, target []byte) bool {
@@ -530,8 +547,8 @@ func (f *Fabric) SearchAddr(name, addr string) ([]libveritas.Zone, error) {
 		// Filter to zones that actually contain the matching addr record
 		var matching []libveritas.Zone
 		for _, z := range zones {
-			if z.Records != nil {
-				rs := libveritas.NewRecordSet(*z.Records)
+			if len(z.Records) > 0 {
+				rs := libveritas.NewRecordSet(z.Records)
 				records, err := rs.Unpack()
 				if err != nil {
 					continue

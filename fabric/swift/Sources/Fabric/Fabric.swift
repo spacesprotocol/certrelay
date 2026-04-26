@@ -84,19 +84,28 @@ private struct AnchorPool {
     var observed: String = ""     // raw entries JSON array string
 
     func merged() -> String? {
-        var parts = [String]()
+        var all: [Any] = []
         for src in [trusted, semiTrusted, observed] {
             if src.isEmpty { continue }
-            let inner = src.trimmingCharacters(in: .whitespaces)
-                .dropFirst() // remove [
-                .dropLast()  // remove ]
-                .trimmingCharacters(in: .whitespaces)
-            if !inner.isEmpty {
-                parts.append(String(inner))
+            guard let data = src.data(using: .utf8),
+                  let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] else { continue }
+            all.append(contentsOf: arr)
+        }
+        if all.isEmpty { return nil }
+        var seen = Set<UInt64>()
+        var deduped: [(UInt64, Any)] = []
+        for e in all {
+            let h = ((e as? [String: Any])?["block"] as? [String: Any])?["height"] as? UInt64
+                ?? UInt64(((e as? [String: Any])?["block"] as? [String: Any])?["height"] as? Int ?? 0)
+            if seen.insert(h).inserted {
+                deduped.append((h, e))
             }
         }
-        if parts.isEmpty { return nil }
-        return "[\(parts.joined(separator: ","))]"
+        deduped.sort { $0.0 > $1.0 }
+        let sorted = deduped.map { $0.1 }
+        guard let data = try? JSONSerialization.data(withJSONObject: sorted),
+              let str = String(data: data, encoding: .utf8) else { return nil }
+        return str
     }
 }
 
@@ -248,7 +257,7 @@ public final class Fabric: @unchecked Sendable {
     }
 
     /// Badge given sovereignty and an anchor hash.
-    public func badgeFor(sovereignty: String, anchorHash: String) -> VerificationBadge {
+    public func badgeFor(sovereignty: String, anchorHash: Data) -> VerificationBadge {
         lock.lock()
         let hasAny = trusted != nil || observed != nil || semiTrusted != nil
         lock.unlock()
@@ -701,25 +710,22 @@ public final class Fabric: @unchecked Sendable {
 
     // MARK: - Trust helpers (private)
 
-    private func isRootTrusted(_ anchorHash: String) -> Bool {
+    private func isRootTrusted(_ anchorHash: Data) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = trusted else { return false }
-        guard let rootBytes = Data(hexString: anchorHash) else { return false }
-        return ts.roots.contains { Data($0) == rootBytes }
+        return ts.roots.contains { Data($0) == anchorHash }
     }
 
-    private func isRootObserved(_ anchorHash: String) -> Bool {
+    private func isRootObserved(_ anchorHash: Data) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = observed else { return false }
-        guard let rootBytes = Data(hexString: anchorHash) else { return false }
-        return ts.roots.contains { Data($0) == rootBytes }
+        return ts.roots.contains { Data($0) == anchorHash }
     }
 
-    private func isRootSemiTrusted(_ anchorHash: String) -> Bool {
+    private func isRootSemiTrusted(_ anchorHash: Data) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let ts = semiTrusted else { return false }
-        guard let rootBytes = Data(hexString: anchorHash) else { return false }
-        return ts.roots.contains { Data($0) == rootBytes }
+        return ts.roots.contains { Data($0) == anchorHash }
     }
 
     // MARK: - Internal fetch helpers
