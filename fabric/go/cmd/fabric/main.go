@@ -51,7 +51,8 @@ func main() {
 		seeds = fabric.DefaultSeeds
 	}
 
-	f := fabric.New(seeds)
+	f := fabric.New()
+	f.SetSeeds(seeds)
 	if devMode {
 		f.SetDevMode(true)
 	}
@@ -62,14 +63,14 @@ func main() {
 		}
 	}
 
-	batch, err := f.ResolveAll(handles)
+	zones, err := f.ResolveAll(handles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 
 	zoneMap := make(map[string]libveritas.Zone)
-	for _, z := range batch.Zones {
+	for _, z := range zones {
 		if _, exists := zoneMap[z.Handle]; !exists {
 			zoneMap[z.Handle] = z
 		}

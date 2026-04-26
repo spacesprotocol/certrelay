@@ -53,7 +53,7 @@ fun main(args: Array<String>) {
         }
     }
 
-    val batch = try {
+    val zones = try {
         fabric.resolveAll(handles)
     } catch (e: Exception) {
         System.err.println("error: $e")
@@ -61,7 +61,7 @@ fun main(args: Array<String>) {
     }
 
     for (handle in handles) {
-        val zone = batch.zones.find { it.handle == handle }
+        val zone = zones.find { it.handle == handle }
         if (zone == null) {
             System.err.println("$handle: not found")
             continue

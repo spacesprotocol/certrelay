@@ -45,10 +45,10 @@ struct FabricCLI {
             try await fabric.trust(trustId)
         }
 
-        let batch = try await fabric.resolveAll(handles)
+        let zones = try await fabric.resolveAll(handles)
 
         for handle in handles {
-            guard let zone = batch.zones.first(where: { $0.handle == handle }) else {
+            guard let zone = zones.first(where: { $0.handle == handle }) else {
                 fputs("\(handle): not found\n", stderr)
                 continue
             }

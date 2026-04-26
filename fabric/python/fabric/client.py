@@ -93,6 +93,10 @@ class _AnchorPool:
             if h not in seen:
                 seen.add(h)
                 deduped.append(e)
+        deduped.sort(
+            key=lambda e: e.get("block", {}).get("height", 0) if isinstance(e, dict) else 0,
+            reverse=True,
+        )
         return deduped
 
 

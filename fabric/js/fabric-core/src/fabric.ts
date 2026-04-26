@@ -144,6 +144,7 @@ export class Fabric {
       seen.add(h);
       return true;
     });
+    deduped.sort((a, b) => (b.block?.height ?? b.height) - (a.block?.height ?? a.height));
     const anchors = this.provider.createAnchors(deduped);
     this.veritas = this.provider.createVeritas(anchors);
   }

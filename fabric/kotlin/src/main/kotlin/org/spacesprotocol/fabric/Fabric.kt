@@ -4,7 +4,10 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.spacesprotocol.libveritas.*
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -60,15 +63,23 @@ private class AnchorPool {
     var observed: String = ""     // raw entries JSON array string
 
     fun merged(): String {
-        val parts = mutableListOf<String>()
+        val all = mutableListOf<JsonElement>()
         for (src in listOf(trusted, semiTrusted, observed)) {
-            if (src.isNotEmpty()) {
-                // Strip outer brackets and add contents
-                val inner = src.trim().removePrefix("[").removeSuffix("]").trim()
-                if (inner.isNotEmpty()) parts.add(inner)
-            }
+            if (src.isEmpty()) continue
+            try {
+                all.addAll(json.parseToJsonElement(src).jsonArray)
+            } catch (_: Exception) {}
         }
-        return "[${parts.joinToString(",")}]"
+        val seen = mutableSetOf<Long>()
+        val deduped = mutableListOf<Pair<Long, JsonElement>>()
+        for (e in all) {
+            val h = (e as? kotlinx.serialization.json.JsonObject)
+                ?.get("block")?.jsonObject
+                ?.get("height")?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            if (seen.add(h)) deduped.add(h to e)
+        }
+        deduped.sortByDescending { it.first }
+        return "[${deduped.joinToString(",") { it.second.toString() }}]"
     }
 }
 
@@ -126,7 +137,7 @@ class Fabric(
     fun badge(zone: Zone): VerificationBadge =
         badgeFor(zone.sovereignty, zone.anchorHash)
 
-    fun badgeFor(sovereignty: String, anchorHash: String): VerificationBadge {
+    fun badgeFor(sovereignty: String, anchorHash: ByteArray): VerificationBadge {
         val hasAny = synchronized(lock) { trusted != null || observed != null || semiTrusted != null }
         if (!hasAny) return VerificationBadge.Unverified
 
@@ -671,22 +682,19 @@ class Fabric(
 
     // -- Private trust helpers --
 
-    private fun isRootTrusted(anchorHash: String): Boolean {
+    private fun isRootTrusted(anchorHash: ByteArray): Boolean {
         val ts = trusted ?: return false
-        val rootBytes = anchorHash.hexToByteArray()
-        return ts.roots.any { it.contentEquals(rootBytes) }
+        return ts.roots.any { it.contentEquals(anchorHash) }
     }
 
-    private fun isRootObserved(anchorHash: String): Boolean {
+    private fun isRootObserved(anchorHash: ByteArray): Boolean {
         val ts = observed ?: return false
-        val rootBytes = anchorHash.hexToByteArray()
-        return ts.roots.any { it.contentEquals(rootBytes) }
+        return ts.roots.any { it.contentEquals(anchorHash) }
     }
 
-    private fun isRootSemiTrusted(anchorHash: String): Boolean {
+    private fun isRootSemiTrusted(anchorHash: ByteArray): Boolean {
         val ts = semiTrusted ?: return false
-        val rootBytes = anchorHash.hexToByteArray()
-        return ts.roots.any { it.contentEquals(rootBytes) }
+        return ts.roots.any { it.contentEquals(anchorHash) }
     }
 }
 
