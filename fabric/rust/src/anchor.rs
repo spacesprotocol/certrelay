@@ -12,10 +12,19 @@ pub struct AnchorSets {
 impl AnchorSets {
     pub fn from_anchors(raw: Vec<RootAnchor>) -> Self {
         let mut sets = HashMap::new();
-        for chunk in raw.chunks(ANCHOR_SET_SIZE) {
-            let expanded = AnchorSet::from_anchors(chunk.to_vec());
-            let trust_set = compute_trust_set(chunk);
+        let insert = |sets: &mut HashMap<TrustId, AnchorSet>, window: &[RootAnchor]| {
+            let expanded = AnchorSet::from_anchors(window.to_vec());
+            let trust_set = compute_trust_set(window);
             sets.insert(TrustId::from(trust_set.id), expanded);
+        };
+        if raw.len() < ANCHOR_SET_SIZE {
+            if !raw.is_empty() {
+                insert(&mut sets, &raw);
+            }
+        } else {
+            for window in raw.windows(ANCHOR_SET_SIZE) {
+                insert(&mut sets, window);
+            }
         }
         Self { sets }
     }
