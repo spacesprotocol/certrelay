@@ -8,6 +8,10 @@ publish = false
 name = "certrelay"
 path = "src/main.rs"
 
+[[bin]]
+name = "monitor"
+path = "src/bin/monitor.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 libveritas = { workspace = true }
@@ -33,6 +37,7 @@ secp256k1 = "0.29"
 tracing = "0.1"
 yuki = { version = "0.0.1", package = "bitcoin_yuki" }
 env_logger = "0.11.9"
+log = "0.4"
 hex = "0.4.3"
 tower-http = { version = "0.6", features = ["cors"] }
 base64 = "0.22"

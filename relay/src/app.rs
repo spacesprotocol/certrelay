@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::anchor::AnchorSets;
 use crate::{
@@ -84,14 +84,98 @@ fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(".certrelay"))
 }
 
+/// Mask `user:pass` in URLs of the form `scheme://user:pass@host[...]` so
+/// secrets in env-var-sourced configuration are never echoed to the console.
+fn redact_url(url: &str) -> String {
+    if let Some(scheme_end) = url.find("://") {
+        let after = &url[scheme_end + 3..];
+        if let Some(at_rel) = after.find('@') {
+            let userinfo = &after[..at_rel];
+            if userinfo.contains(':') {
+                return format!("{}://***:***{}", &url[..scheme_end], &after[at_rel..]);
+            }
+        }
+    }
+    url.to_string()
+}
+
+/// Print every `CERTRELAY_*`-backed setting that this process will use,
+/// alongside the effective values after defaults have been applied. Written
+/// to stderr with `eprintln!` so it's visible regardless of `RUST_LOG` /
+/// tracing-subscriber configuration.
+fn log_startup_env(args: &Args, data_dir: &Path) {
+    let effective_port = args.port.unwrap_or(match args.chain {
+        ExtendedNetwork::Mainnet => 7778,
+        _ => 7779,
+    });
+    let spaced_url_display = match args.spaced_rpc_url.as_deref() {
+        Some(u) => redact_url(u),
+        None => "<embedded yuki + spaced>".to_string(),
+    };
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "<unset>".to_string());
+
+    eprintln!("certrelay: effective configuration");
+    eprintln!("  CERTRELAY_CHAIN            = {}", args.chain);
+    eprintln!("  CERTRELAY_DATA_DIR         = {}", data_dir.display());
+    eprintln!("  CERTRELAY_BIND             = {}", args.bind);
+    eprintln!("  CERTRELAY_PORT             = {}", effective_port);
+    eprintln!(
+        "  CERTRELAY_SELF_URL         = {}",
+        args.self_url.as_deref().unwrap_or("<unset>")
+    );
+    eprintln!("  CERTRELAY_SPACED_RPC_URL   = {}", spaced_url_display);
+    eprintln!(
+        "  CERTRELAY_REMOTE_IP_HEADER = {}",
+        args.remote_ip_header.as_deref().unwrap_or("<unset>")
+    );
+    eprintln!("  CERTRELAY_BOOTSTRAP        = {}", args.is_bootstrap);
+    eprintln!(
+        "  CERTRELAY_ANCHOR_REFRESH   = {}s",
+        args.anchor_refresh
+    );
+    eprintln!(
+        "  CERTRELAY_SEEDS            = {}",
+        if args.seeds.is_empty() {
+            "<builtin mainnet / none off-mainnet>".to_string()
+        } else {
+            args.seeds.join(",")
+        }
+    );
+    eprintln!("  --skip-checkpoint-sync     = {}", args.skip_checkpoint_sync);
+    eprintln!(
+        "  CERTRELAY_ALLOW_PRIVATE_PEERS = {}",
+        args.allow_private_peers
+    );
+    eprintln!(
+        "  CERTRELAY_CONFIG           = {}",
+        args.config
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unset>".to_string())
+    );
+    eprintln!("  RUST_LOG                   = {}", rust_log);
+}
+
 pub async fn run(
     args: Vec<String>,
     shutdown: tokio::sync::broadcast::Sender<()>,
 ) -> anyhow::Result<()> {
     let args = Args::try_parse_from(args)?;
 
-    let data_dir = args.data_dir.unwrap_or_else(default_data_dir);
+    // Cloning here (rather than `unwrap_or_else` which would move out of
+    // `args`) lets log_startup_env borrow the full Args struct below.
+    let data_dir = args
+        .data_dir
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(default_data_dir);
     std::fs::create_dir_all(&data_dir)?;
+
+    log_startup_env(&args, &data_dir);
+
+    // Captured before fields of `args` get consumed below, so the final
+    // "ready" banner can still surface the public URL to operators.
+    let self_url_for_banner: Option<String> = args.self_url.clone();
 
     // Start embedded yuki + spaced if no external spaced URL was provided
     let mut spaced_url = args.spaced_rpc_url;
@@ -325,7 +409,23 @@ pub async fn run(
     });
     let bind_addr = format!("{}:{}", args.bind, port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    tracing::info!("relay listening on {}", listener.local_addr()?);
+    let local = listener.local_addr()?;
+    tracing::info!("relay listening on {}", local);
+
+    // Guaranteed-visible "ready" banner so operators always see *where*
+    // the relay is serving, even if no tracing-subscriber is configured.
+    eprintln!();
+    eprintln!("certrelay: ready");
+    eprintln!("  listening on:  http://{}", local);
+    if local.ip().is_unspecified() {
+        eprintln!(
+            "                 (also reachable as http://127.0.0.1:{} on this host)",
+            local.port()
+        );
+    }
+    if let Some(self_url) = self_url_for_banner.as_deref() {
+        eprintln!("  public URL:    {}", self_url.trim_end_matches('/'));
+    }
 
     relay
         .run_with_shutdown(listener, shutdown.subscribe())

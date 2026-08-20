@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Bug Fixes
 
 - Report the newest anchor as the tip, not the oldest
+- Preserve a root cert's ZK receipt on a receipt-less re-send
 
 ### Chore
 

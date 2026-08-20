@@ -19,10 +19,17 @@ path = "rust/src/lib.rs"
 [[bin]]
 name = "fabric"
 path = "rust/src/main.rs"
-required-features = ["client"]
+# The `publish` subcommand needs `signing` (secp256k1 schnorr) in addition
+# to the HTTP `client` stack used by `resolve`.
+required-features = ["client", "signing"]
 
 [features]
-default = ["client"]
+# `signing` is in the default set so `cargo install --bin fabric` and the
+# `cargo build -p fabric-resolver --bin fabric` in the Dockerfile both
+# produce a CLI that can publish out of the box. Library consumers that
+# don't want secp256k1 link-in (e.g. the `relay` crate) opt out with
+# `default-features = false`.
+default = ["client", "signing"]
 client = ["reqwest", "rand", "tokio", "secp256k1"]
 signing = ["secp256k1"]
 

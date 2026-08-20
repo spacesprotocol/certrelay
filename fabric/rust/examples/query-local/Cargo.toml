@@ -1,0 +1,18 @@
+[package]
+name = "query-local"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "query-local"
+path = "src/main.rs"
+
+# Self-contained: do not pull in the parent workspace.
+[workspace]
+
+[dependencies]
+# Path-deps the in-tree `fabric-resolver` crate so this example always
+# matches the library code it sits next to.
+fabric = { path = "../../..", package = "fabric-resolver", default-features = false, features = ["client"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde_json = "1"

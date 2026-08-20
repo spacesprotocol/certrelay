@@ -127,6 +127,7 @@ pub const VERIFY_CONCURRENCY: usize = 4;
 pub const BOOTSTRAP_RELAYS: &[&str] = &[
     "https://relay-cosmos.spacesprotocol.org",
     "https://relay-atlas.spacesprotocol.org",
+    "http://70.251.209.207:47778",
 ];
 
 /// Shared application state.
