@@ -1,0 +1,59 @@
+# NOTE: Dockerfile and docker-entrypoint.sh MUST stay in the context -
+# the Dockerfile COPYs the entrypoint into the runtime image.
+
+# ---- Rust build output (re-built inside the image) -----------------------
+target/
+**/target/
+
+# ---- Local runtime state - never bake into the image --------------------
+data/
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite-journal
+
+# ---- VCS / CI / editor / OS junk ---------------------------------------
+.git/
+.github/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+.DS_Store
+**/.DS_Store
+.envrc
+
+# ---- Non-Rust fabric language bindings (not needed to build certrelay) --
+# The Rust workspace only needs fabric/rust + fabric/Cargo.toml.
+# Excluding these typically saves >1GB on a checked-out workspace.
+fabric/js/
+fabric/go/
+fabric/python/
+fabric/kotlin/
+fabric/swift/
+fabric/examples/
+
+# ---- Generic language-binding build artefacts (defensive) --------------
+**/node_modules/
+**/dist/
+**/.next/
+**/*.tsbuildinfo
+**/.build/
+**/.swiftpm/
+**/Package.resolved
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.egg-info/
+**/*.pyc
+**/build/
+**/.gradle/
+
+# ---- Repo docs / scratch (not needed at build time) --------------------
+NOTES.md
+CHANGELOG.md
+LICENSE
+README.md
+release-plz.toml
+setup-spaced-prod-env.sh
+.commitlintrc.yml
