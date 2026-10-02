@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "signing")]
 use libveritas::{
-    builder::MessageBuilder,
+    builder::{DataUpdateRequest, MessageBuilder},
     msg::ChainProof,
     sip7::{RecordSet, SIG_PRIMARY_ZONE},
 };
@@ -1326,6 +1326,69 @@ impl Fabric {
         }
 
         Ok(message.to_bytes())
+    }
+
+    /// Build a signed delegate-record message without exposing the operator key.
+    ///
+    /// The signer receives the exact bytes expected by `spaced`'s
+    /// `walletsignschnorr` RPC. It must sign with the active delegated num for
+    /// the space in `cert`.
+    #[cfg(feature = "signing")]
+    pub async fn sign_delegate_with<F, E>(
+        &self,
+        cert: &[u8],
+        records: RecordSet,
+        signer: F,
+    ) -> Result<Vec<u8>>
+    where
+        F: FnOnce(&[u8]) -> std::result::Result<Vec<u8>, E>,
+        E: std::fmt::Display,
+    {
+        let chain = CertificateChain::from_slice(cert)?;
+        let handle = chain.subject().clone();
+        let mut builder = MessageBuilder::new();
+        builder.add_chain(chain);
+        builder.add_update(DataUpdateRequest {
+            handle,
+            records: None,
+            delegate_records: Some(records),
+        });
+        let proof = ChainProof::from_slice(&self.prove(&builder.chain_proof_request()).await?)?;
+        let (mut message, mut unsigned) = builder.build(proof)?;
+        let [unsigned] = unsigned.as_mut_slice() else {
+            return Err(Error::Decode(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "expected one delegate record set",
+            )));
+        };
+        if !unsigned.delegate {
+            return Err(Error::Decode(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "expected delegate record set",
+            )));
+        }
+        let signature = signer(&unsigned.signable_bytes()).map_err(|e| {
+            Error::Decode(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        })?;
+        let signed = unsigned.pack_sig(signature);
+        message.set_delegate_records(&unsigned.canonical, signed);
+        Ok(message.to_bytes())
+    }
+
+    /// Build, sign, and broadcast delegate records with an external signer.
+    #[cfg(feature = "signing")]
+    pub async fn publish_delegate_with<F, E>(
+        &self,
+        cert: &[u8],
+        records: RecordSet,
+        signer: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&[u8]) -> std::result::Result<Vec<u8>, E>,
+        E: std::fmt::Display,
+    {
+        let msg = self.sign_delegate_with(cert, records, signer).await?;
+        self.broadcast(&msg).await
     }
 
     /// Fetch the peer list from a random relay.
