@@ -296,6 +296,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/chain-proof", post(handle_chain_proof))
         .route("/reverse", get(handle_reverse))
         .route("/addrs", get(handle_addrs))
+        .route("/discover", get(handle_discover))
         .route("/sync", get(handle_sync))
         .route("/sync/summary", get(handle_sync_summary))
         .route("/poke", post(handle_poke))
@@ -1193,6 +1194,56 @@ async fn handle_reverse(
         Err(e) => {
             tracing::warn!("reverse lookup failed: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "lookup failed").into_response()
+        }
+    }
+}
+
+/// GET /discover?spks=<hex>,<hex>,… - Ownership discovery for wallet restore.
+///
+/// Given controlling script-pubkeys (hex) derived from a seed, returns the
+/// handles each key currently controls — including handles received via
+/// transfer, which genesis-anchored num lookup can't find. Best-effort: it
+/// reflects the controller as of the last stored zone. Returns JSON
+/// `[{ controlling_spk, handle, space, epoch_height, offchain_seq,
+/// delegate_offchain_seq, zone_hash }]`.
+async fn handle_discover(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let ip = state.client_ip(&addr, &headers);
+    if state.over_limit(&state.limiters.read, &ip) {
+        crate::stats::bump(&state.stats.rl_read);
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
+    }
+
+    let spks = match params.get("spks") {
+        Some(s) if !s.is_empty() => s,
+        _ => return (StatusCode::BAD_REQUEST, "missing spks parameter").into_response(),
+    };
+
+    // Normalize to lowercase hex (matching the stored `hex::encode` form) so a
+    // caller passing uppercase still matches.
+    let spk_list: Vec<String> = spks
+        .split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if spk_list.len() > 50 {
+        return (StatusCode::BAD_REQUEST, "too many spks (max 50)").into_response();
+    }
+    let spk_refs: Vec<&str> = spk_list.iter().map(|s| s.as_str()).collect();
+
+    match state.handler.store.discover_by_controlling_spk(&spk_refs) {
+        Ok(records) => {
+            let mut headers = HeaderMap::new();
+            headers.insert("cache-control", "public, max-age=60".parse().unwrap());
+            (headers, axum::Json(records)).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("discover failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "discover failed").into_response()
         }
     }
 }

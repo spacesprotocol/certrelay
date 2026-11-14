@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS handles (
     -- (the seq metadata alone can't distinguish a better zone with unchanged
     -- seqs, e.g. a pending->finalized commitment transition).
     zone_hash BLOB NOT NULL DEFAULT x'',
+    -- Hex of the zone's current controlling script pubkey, for ownership
+    -- discovery (which handles a key controls now — distinct from the
+    -- genesis-anchored num_id). '' marks a row the backfill hasn't filled yet.
+    controlling_spk TEXT NOT NULL DEFAULT '',
     updated_at INTEGER NOT NULL
 );
 
@@ -40,6 +44,9 @@ CREATE INDEX IF NOT EXISTS idx_handles_space ON handles(space);
 
 -- Sync pagination order (see /sync).
 CREATE INDEX IF NOT EXISTS idx_handles_sync_seq ON handles(sync_seq);
+
+-- Ownership discovery: find handles currently controlled by a given key.
+CREATE INDEX IF NOT EXISTS idx_handles_controlling_spk ON handles(controlling_spk);
 
 -- Singleton write counter feeding handles.sync_seq.
 CREATE TABLE IF NOT EXISTS sync_counter (
@@ -158,6 +165,21 @@ pub struct HandleHintRow {
     pub zone_hash: Vec<u8>,
 }
 
+/// One match from ownership discovery: a handle currently controlled by the
+/// queried key, plus the hint fields a wallet needs to then resolve/restore it.
+#[derive(serde::Serialize)]
+pub struct DiscoverRow {
+    /// Hex controlling spk that matched (so the caller maps it to its query key).
+    pub controlling_spk: String,
+    pub handle: String,
+    pub space: String,
+    pub epoch_height: u32,
+    pub offchain_seq: u64,
+    pub delegate_offchain_seq: u64,
+    /// sha256 of the stored zone blob (hex).
+    pub zone_hash: String,
+}
+
 /// sha256 of a zone blob, matching `handles.zone_hash`.
 pub fn zone_hash(zone_data: &[u8]) -> Vec<u8> {
     use sha2::Digest;
@@ -218,6 +240,7 @@ impl SqliteStore {
         Self::migrate_columns(&conn)?;
         conn.execute_batch(SCHEMA)?;
         Self::backfill_sync(&conn)?;
+        Self::backfill_controlling_spk(&conn)?;
         Self::backfill_storage(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -250,6 +273,12 @@ impl SqliteStore {
         if !columns.iter().any(|c| c == "zone_hash") {
             conn.execute(
                 "ALTER TABLE handles ADD COLUMN zone_hash BLOB NOT NULL DEFAULT x''",
+                [],
+            )?;
+        }
+        if !columns.iter().any(|c| c == "controlling_spk") {
+            conn.execute(
+                "ALTER TABLE handles ADD COLUMN controlling_spk TEXT NOT NULL DEFAULT ''",
                 [],
             )?;
         }
@@ -303,6 +332,48 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Backfill `controlling_spk` for rows predating the column by decoding each
+    /// stored zone's `script_pubkey`. New rows set it at insert, so `''` marks
+    /// exactly the legacy rows. Idempotent and crash-resumable: every processed
+    /// row ends non-empty (a decode failure gets the `-` sentinel, which no real
+    /// spk-hex query matches), so the `''` selection strictly shrinks.
+    fn backfill_controlling_spk(conn: &Connection) -> anyhow::Result<()> {
+        const CHUNK: usize = 1000;
+        let mut migrated = 0usize;
+        loop {
+            let chunk: Vec<(String, Vec<u8>)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT handle, zone_data FROM handles WHERE controlling_spk = ''
+                     ORDER BY handle LIMIT ?",
+                )?;
+                let rows = stmt.query_map(params![CHUNK as i64], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            if chunk.is_empty() {
+                break;
+            }
+
+            let tx = conn.unchecked_transaction()?;
+            for (handle, zone_data) in &chunk {
+                let spk = borsh::from_slice::<Zone>(zone_data)
+                    .map(|z| hex::encode(z.script_pubkey.as_bytes()))
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "-".to_string());
+                tx.execute(
+                    "UPDATE handles SET controlling_spk = ? WHERE handle = ?",
+                    params![spk, handle],
+                )?;
+            }
+            tx.commit()?;
+            migrated += chunk.len();
+        }
+        if migrated > 0 {
+            tracing::info!("backfilled controlling_spk for {} handle rows", migrated);
+        }
+        Ok(())
+    }
+
     fn now() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -329,6 +400,9 @@ impl SqliteStore {
             epoch_height: u32,
             offchain_seq: u64,
             delegate_offchain_seq: u64,
+            /// Hex of the zone's current controlling script pubkey (ownership
+            /// discovery index).
+            controlling_spk: String,
             /// Keep the existing stored cert_data instead of this update's cert
             /// (its receipt was omitted; see the preservation note below).
             preserve_cert: bool,
@@ -347,6 +421,7 @@ impl SqliteStore {
                 .map_err(|e| anyhow!("failed to serialize certificate: {}", e))?;
             let zone_data = borsh::to_vec(&update.zone)
                 .map_err(|e| anyhow!("failed to serialize zone: {}", e))?;
+            let controlling_spk = hex::encode(update.zone.script_pubkey.as_bytes());
             entries.push(Prepared {
                 handle,
                 space,
@@ -355,6 +430,7 @@ impl SqliteStore {
                 epoch_height: update.epoch_height,
                 offchain_seq: update.offchain_seq,
                 delegate_offchain_seq: update.delegate_offchain_seq,
+                controlling_spk,
                 preserve_cert: false,
             });
         }
@@ -492,19 +568,19 @@ impl SqliteStore {
             .iter()
             .map(|e| {
                 if e.preserve_cert {
-                    "(?, ?, (SELECT cert_data FROM handles WHERE handle = ?), ?, ?, ?, ?, ?, ?, ?)"
+                    "(?, ?, (SELECT cert_data FROM handles WHERE handle = ?), ?, ?, ?, ?, ?, ?, ?, ?)"
                         .to_string()
                 } else {
-                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)".to_string()
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)".to_string()
                 }
             })
             .collect();
         let query = format!(
-            "INSERT OR REPLACE INTO handles (handle, space, cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, sync_seq, zone_hash, updated_at) VALUES {}",
+            "INSERT OR REPLACE INTO handles (handle, space, cert_data, zone_data, epoch_height, offchain_seq, delegate_offchain_seq, sync_seq, zone_hash, controlling_spk, updated_at) VALUES {}",
             placeholders.join(", ")
         );
 
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(to_store.len() * 10);
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(to_store.len() * 11);
         for (i, e) in to_store.iter().enumerate() {
             params.push(Box::new(e.handle.clone()));
             params.push(Box::new(e.space.clone()));
@@ -521,6 +597,7 @@ impl SqliteStore {
             params.push(Box::new(e.delegate_offchain_seq as i64));
             params.push(Box::new(seq_base + 1 + i as i64));
             params.push(Box::new(zone_hash(&e.zone_data)));
+            params.push(Box::new(e.controlling_spk.clone()));
             params.push(Box::new(now));
         }
 
@@ -1110,6 +1187,37 @@ impl SqliteStore {
             Ok(ReverseRecord {
                 id: row.get(0)?,
                 name: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Ownership discovery: handles currently controlled by any of these spks
+    /// (hex). One key can control several handles, so each query spk may match
+    /// multiple rows. Reflects the controller as of the last stored zone.
+    pub fn discover_by_controlling_spk(&self, spks: &[&str]) -> anyhow::Result<Vec<DiscoverRow>> {
+        if spks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders: Vec<&str> = spks.iter().map(|_| "?").collect();
+        let query = format!(
+            "SELECT controlling_spk, handle, space, epoch_height, offchain_seq, delegate_offchain_seq, zone_hash
+             FROM handles WHERE controlling_spk IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&query)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            spks.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok(DiscoverRow {
+                controlling_spk: row.get(0)?,
+                handle: row.get(1)?,
+                space: row.get(2)?,
+                epoch_height: row.get(3)?,
+                offchain_seq: row.get::<_, i64>(4)? as u64,
+                delegate_offchain_seq: row.get::<_, i64>(5)? as u64,
+                zone_hash: hex::encode(row.get::<_, Vec<u8>>(6)?),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
