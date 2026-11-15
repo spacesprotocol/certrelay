@@ -48,6 +48,21 @@ export interface ResolvedWithCerts {
   certs: Uint8Array;
 }
 
+/** One ownership-discovery hit from {@link Fabric.discover}. Unverified. */
+export interface DiscoverResult {
+  /** The controlling script-pubkey (hex) that matched the query. */
+  controlling_spk: string;
+  /** Full handle name, e.g. "alice@bitcoin". */
+  handle: string;
+  /** Parent space, e.g. "@bitcoin". */
+  space: string;
+  epoch_height: number;
+  offchain_seq: number;
+  delegate_offchain_seq: number;
+  /** sha256 of the stored zone blob (hex). */
+  zone_hash: string;
+}
+
 /**
  * A relay in the semi-trusted pool, pinned by URL and x-only public key. The
  * key is mandatory: a semi-trusted relay is exactly a `(url, pinned key)` pair.
@@ -769,6 +784,42 @@ export class Fabric {
     }
 
     throw lastErr;
+  }
+
+  /**
+   * Discover handles currently controlled by the given script-pubkeys (hex),
+   * for seed-based wallet restore. Unlike genesis-anchored num lookup, this
+   * finds handles received via transfer (where the controlling key differs
+   * from the genesis key).
+   *
+   * Best-effort: unions results across a few relays (a handle is included if
+   * any relay reports it), reflecting the controller as of each relay's last
+   * stored zone. Results are unverified hints — call {@link Fabric.resolve} on
+   * the returned handles to verify before treating them as owned.
+   */
+  async discover(spks: string[]): Promise<DiscoverResult[]> {
+    if (spks.length === 0) return [];
+    await this.bootstrap();
+    const relays = this.pool.shuffledUrls(4);
+    const normalized = spks.map((s) => s.toLowerCase());
+    const seen = new Map<string, DiscoverResult>();
+
+    // Respect the relay's per-request cap (50) by chunking.
+    for (let i = 0; i < normalized.length; i += 50) {
+      const chunk = normalized.slice(i, i + 50);
+      const ids = chunk.join(",");
+      for (const url of relays) {
+        try {
+          const resp = await fetch(`${url}/discover?spks=${encodeURIComponent(ids)}`);
+          if (!resp.ok) continue;
+          const rows: DiscoverResult[] = await resp.json();
+          for (const r of rows) seen.set(`${r.controlling_spk}\u0000${r.handle}`, r);
+        } catch {
+          // best-effort: skip unreachable/erroring relays
+        }
+      }
+    }
+    return [...seen.values()];
   }
 
   /** Search for handles by address record. Verifies results via forward resolution. */

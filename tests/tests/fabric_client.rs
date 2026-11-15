@@ -363,3 +363,76 @@ fn peek_nested_first_batch_is_a_flat_key() {
     let batch: Vec<String> = lookup.start().iter().map(|s| s.to_string()).collect();
     assert_eq!(batch, vec!["genesis@key".to_string()]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_discover_by_controlling_spk() {
+    let mut state = ChainState::new();
+    let mut runner = FixtureRunner::new(&mut state, single_commit_finalized());
+    runner.run(&mut state);
+
+    let (url, app) = start_relay(&state).await;
+
+    // Store @sovereign + alice@sovereign.
+    let bundle = runner.build_bundle();
+    let msg = state.message(vec![bundle]);
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/message", url))
+        .body(msg.to_bytes())
+        .header("content-type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+
+    // Read alice's controlling spk straight from the stored zone — the exact
+    // bytes the index is built from, so the test doesn't depend on any
+    // serialization format.
+    let recs = app.handler.store.get_handles(&["alice@sovereign"]).unwrap();
+    assert!(!recs.is_empty(), "alice@sovereign should be stored");
+    let spk_hex = hex::encode(recs[0].zone.script_pubkey.as_bytes());
+
+    // Discover by that controlling key.
+    let rows: Vec<serde_json::Value> = client
+        .get(format!("{}/discover?spks={}", url, spk_hex))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let found = rows
+        .iter()
+        .find(|r| r["handle"] == "alice@sovereign")
+        .expect("alice@sovereign should be discovered by its controlling spk");
+    assert_eq!(found["controlling_spk"], spk_hex);
+    assert_eq!(found["space"], "@sovereign");
+    assert!(
+        found["zone_hash"].as_str().is_some_and(|s| s.len() == 64),
+        "zone_hash should be 32-byte hex, got {found:?}"
+    );
+
+    // An unknown controlling key discovers nothing (empty, not an error).
+    let empty: Vec<serde_json::Value> = client
+        .get(format!("{}/discover?spks={}", url, "ab".repeat(34)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        empty.is_empty(),
+        "unknown spk should discover nothing, got {empty:?}"
+    );
+
+    // Missing spks parameter is a 400.
+    let status = client
+        .get(format!("{}/discover", url))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    assert_eq!(status, 400, "missing spks should be a 400");
+}
